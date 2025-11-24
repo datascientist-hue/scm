@@ -565,44 +565,88 @@ if data:
     # =================================================================================
     elif page == "📈 Stock Aging":
         st.sidebar.header("Dashboard Filters")
-        brand_options = ['All'] + list(stock_aging_data['Brand'].unique())
-        selected_brands_option = st.sidebar.multiselect("Select Brand(s)", brand_options, default='All')
-        selected_brands = list(stock_aging_data['Brand'].unique()) if 'All' in selected_brands_option else selected_brands_option
-        state_options = ['All'] + list(stock_aging_data['State'].unique())
-        selected_states_option = st.sidebar.multiselect("Select State(s)", state_options, default='All')
-        selected_states = list(stock_aging_data['State'].unique()) if 'All' in selected_states_option else selected_states_option
-        warehouse_options = ['All'] + list(stock_aging_data['WhsCode'].unique())
-        selected_warehouses_option = st.sidebar.multiselect("Select Warehouse Code(s)", warehouse_options, default='All')
-        selected_warehouses = list(stock_aging_data['WhsCode'].unique()) if 'All' in selected_warehouses_option else selected_warehouses_option
-        prod_group_options = ['All'] + list(stock_aging_data['ProductGroup'].unique())
-        selected_prod_groups_option = st.sidebar.multiselect("Select SKU", prod_group_options, default='All')
-        selected_prod_groups = list(stock_aging_data['ProductGroup'].unique()) if 'All' in selected_prod_groups_option else selected_prod_groups_option
-        filtered_df = stock_aging_data[stock_aging_data["Brand"].isin(selected_brands) & stock_aging_data["State"].isin(selected_states) & stock_aging_data["WhsCode"].isin(selected_warehouses) & stock_aging_data["ProductGroup"].isin(selected_prod_groups)]
+        
+        # --- MODIFICATION START: Changed multiselect to selectbox ---
+        filtered_df = stock_aging_data.copy()
+
+        brand_options = ['All'] + sorted(list(stock_aging_data['Brand'].unique()))
+        selected_brand = st.sidebar.selectbox("Select Brand", brand_options)
+        if selected_brand != 'All':
+            filtered_df = filtered_df[filtered_df['Brand'] == selected_brand]
+
+        state_options = ['All'] + sorted(list(stock_aging_data['State'].unique()))
+        selected_state = st.sidebar.selectbox("Select State", state_options)
+        if selected_state != 'All':
+            filtered_df = filtered_df[filtered_df['State'] == selected_state]
+
+        warehouse_options = ['All'] + sorted(list(stock_aging_data['WhsCode'].unique()))
+        selected_warehouse = st.sidebar.selectbox("Select Warehouse Code", warehouse_options)
+        if selected_warehouse != 'All':
+            filtered_df = filtered_df[filtered_df['WhsCode'] == selected_warehouse]
+
+        prod_group_options = ['All'] + sorted(list(stock_aging_data['ProductGroup'].unique()))
+        selected_prod_group = st.sidebar.selectbox("Select SKU", prod_group_options)
+        if selected_prod_group != 'All':
+            filtered_df = filtered_df[filtered_df['ProductGroup'] == selected_prod_group]
+        # --- MODIFICATION END ---
+        
         st.title("📦 Interactive Stock Aging Dashboard")
         st.markdown("Use the filters on the left to analyze the inventory data.")
-        total_value, total_qty, aged_value = filtered_df["TotalValue"].sum(), filtered_df["TotalQty"].sum(), filtered_df[["181-360Value", "361-720Value", "721+DaysValue"]].sum().sum()
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Inventory Value", format_indian_currency_kpi(total_value))
-        col2.metric("Total Items in Stock", f"{total_qty:,.0f}")
-        col3.metric("Value of Aged Stock (>180d)", format_indian_currency_kpi(aged_value))
-        st.markdown("---")
-        st.subheader("Stock by Age Category")
-        less_than_30_value = filtered_df[['0-15Value', '16-30Value']].sum().sum()
-        greater_than_30_value = total_value - less_than_30_value
-        less_than_30_cases = filtered_df[['0-15Qty', '16-30Qty']].sum().sum()
-        greater_than_30_cases = total_qty - less_than_30_cases
-        
-        kpi_col1, kpi_col2 = st.columns(2)
-        kpi_col1.metric("Stock Value < 30 Days", format_indian_currency_kpi(less_than_30_value))
-        kpi_col2.metric("Stock Value > 30 Days", format_indian_currency_kpi(greater_than_30_value))
 
-        kpi_col3, kpi_col4 = st.columns(2)
-        kpi_col3.metric("Stock Cases < 30 Days", format_indian_number(less_than_30_cases))
-        kpi_col4.metric("Stock Cases > 30 Days", format_indian_number(greater_than_30_cases))
+        if filtered_df.empty:
+            st.warning("No data available for the selected filters.")
+        else:
+            total_value, total_qty, aged_value = filtered_df["TotalValue"].sum(), filtered_df["TotalQty"].sum(), filtered_df[["181-360Value", "361-720Value", "721+DaysValue"]].sum().sum()
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Inventory Value", format_indian_currency_kpi(total_value))
+            col2.metric("Total Items in Stock", f"{total_qty:,.0f}")
+            col3.metric("Value of Aged Stock (>180d)", format_indian_currency_kpi(aged_value))
+            st.markdown("---")
+            st.subheader("Stock by Age Category")
+            less_than_30_value = filtered_df[['0-15Value', '16-30Value']].sum().sum()
+            greater_than_30_value = total_value - less_than_30_value
+            less_than_30_cases = filtered_df[['0-15Qty', '16-30Qty']].sum().sum()
+            greater_than_30_cases = total_qty - less_than_30_cases
+            
+            kpi_col1, kpi_col2 = st.columns(2)
+            kpi_col1.metric("Stock Value < 30 Days", format_indian_currency_kpi(less_than_30_value))
+            kpi_col2.metric("Stock Value > 30 Days", format_indian_currency_kpi(greater_than_30_value))
 
+            kpi_col3, kpi_col4 = st.columns(2)
+            kpi_col3.metric("Stock Cases < 30 Days", format_indian_number(less_than_30_cases))
+            kpi_col4.metric("Stock Cases > 30 Days", format_indian_number(greater_than_30_cases))
 
+            st.markdown("---")
+            st.header("Inventory Age Distribution")
+            
+            aging_data = {
+                'Aging Bucket': ['0-15 Days', '16-30 Days', '31-60 Days', '61-90 Days', '91-180 Days', '181-360 Days', '361-720 Days', '721+ Days'],
+                'Value': [
+                    filtered_df['0-15Value'].sum(), filtered_df['16-30Value'].sum(), 
+                    filtered_df['31-60Value'].sum(), filtered_df['61-90Value'].sum(), 
+                    filtered_df['91-180Value'].sum(), filtered_df['181-360Value'].sum(), 
+                    filtered_df['361-720Value'].sum(), filtered_df['721+DaysValue'].sum()
+                ],
+                'Quantity': [
+                    filtered_df['0-15Qty'].sum(), filtered_df['16-30Qty'].sum(),
+                    filtered_df['31-60Qty'].sum(), filtered_df['61-90Qty'].sum(),
+                    filtered_df['91-180Qty'].sum(), filtered_df['181-360Qty'].sum(),
+                    filtered_df['361-720Qty'].sum(), filtered_df['721+Qty'].sum()
+                ]
+            }
+            aging_df = pd.DataFrame(aging_data)
+            
+            aging_df['value_label'] = (aging_df['Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
+            aging_df['qty_label'] = aging_df['Quantity'].apply(format_indian_number)
+            
+            fig_aging_combo = create_combo_chart(
+                df=aging_df, x_col='Aging Bucket', bar_col='Value', line_col='Quantity',
+                bar_text=aging_df['value_label'], line_text=aging_df['qty_label'],
+                title="Inventory Age Distribution: Value (Bars) and Quantity (Line)"
+            )
+            st.plotly_chart(fig_aging_combo, use_container_width=True)
 
-        if not filtered_df.empty:
+            # --- MODIFICATION START: "Brand Value by Age" section moved here ---
             st.markdown("---")
             st.header("Brand Value by Age")
             filtered_df['<30 Days Value'], filtered_df['>30 Days Value'] = filtered_df['0-15Value'] + filtered_df['16-30Value'], filtered_df['TotalValue'] - (filtered_df['0-15Value'] + filtered_df['16-30Value'])
@@ -637,40 +681,11 @@ if data:
                     st.plotly_chart(fig_gt30, use_container_width=True)
                 else:
                     st.info("No stock data available for > 30 Days.")
+            # --- MODIFICATION END ---
 
-        st.markdown("---")
-        st.header("Inventory Age Distribution")
-        
-        aging_data = {
-            'Aging Bucket': ['0-15 Days', '16-30 Days', '31-60 Days', '61-90 Days', '91-180 Days', '181-360 Days', '361-720 Days', '721+ Days'],
-            'Value': [
-                filtered_df['0-15Value'].sum(), filtered_df['16-30Value'].sum(), 
-                filtered_df['31-60Value'].sum(), filtered_df['61-90Value'].sum(), 
-                filtered_df['91-180Value'].sum(), filtered_df['181-360Value'].sum(), 
-                filtered_df['361-720Value'].sum(), filtered_df['721+DaysValue'].sum()
-            ],
-            'Quantity': [
-                filtered_df['0-15Qty'].sum(), filtered_df['16-30Qty'].sum(),
-                filtered_df['31-60Qty'].sum(), filtered_df['61-90Qty'].sum(),
-                filtered_df['91-180Qty'].sum(), filtered_df['181-360Qty'].sum(),
-                filtered_df['361-720Qty'].sum(), filtered_df['721+Qty'].sum()
-            ]
-        }
-        aging_df = pd.DataFrame(aging_data)
-        
-        aging_df['value_label'] = (aging_df['Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
-        aging_df['qty_label'] = aging_df['Quantity'].apply(format_indian_number)
-        
-        fig_aging_combo = create_combo_chart(
-            df=aging_df, x_col='Aging Bucket', bar_col='Value', line_col='Quantity',
-            bar_text=aging_df['value_label'], line_text=aging_df['qty_label'],
-            title="Inventory Age Distribution: Value (Bars) and Quantity (Line)"
-        )
-        st.plotly_chart(fig_aging_combo, use_container_width=True)
-
-        st.header("Download Filtered Stock Data")
-        csv_aging_data = convert_df_to_csv(filtered_df)
-        st.download_button(label="Download Aging Data as CSV", data=csv_aging_data, file_name="stock_aging_data.csv", mime="text/csv")
+            st.header("Download Filtered Stock Data")
+            csv_aging_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="Download Aging Data as CSV", data=csv_aging_data, file_name="stock_aging_data.csv", mime="text/csv")
 
 
     # =================================================================================
@@ -726,6 +741,24 @@ if data:
             kpi5.metric("📦 Delivered <= 3 Days", f"{delivery_le3:,}", delta=delivery_le3_pct)
             kpi6.metric("🐌 Delivered > 3 Days", f"{delivery_gt3:,}", delta=delivery_gt3_pct, delta_color="inverse")
             st.divider()
+
+            st.subheader("Dispatch vs. Delivery Performance")
+            col1_perf, col2_perf = st.columns(2)
+            with col1_perf:
+                matched_df = filtered_df[filtered_df['Billing Status'] == 'Matched']
+                if not matched_df.empty:
+                    st.altair_chart(create_grouped_bar_chart(matched_df, '✅ Matched Orders'), use_container_width=True)
+                else:
+                    st.info("No Matched orders data to display.")
+
+            with col2_perf:
+                mismatched_df = filtered_df[filtered_df['Billing Status'] == 'Mismatched']
+                if not mismatched_df.empty:
+                    st.altair_chart(create_grouped_bar_chart(mismatched_df, '❌ Cross Billed Orders'), use_container_width=True)
+                else:
+                    st.info("No Cross Billed orders data to display.")
+
+            st.divider()
             st.subheader("Depot Performance Matrix By Orders")
             depot_summary = dispatch_delivery_df.groupby('WhsCode').agg(total_orders=('WhsCode', 'size'), matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())).reset_index()
             depot_summary['match_rate_%'], depot_summary['mismatch_rate_%'] = (depot_summary['matched_orders'] / depot_summary['total_orders']) * 100, (depot_summary['mismatched_orders'] / depot_summary['total_orders']) * 100
@@ -747,24 +780,7 @@ if data:
                
             else:
                 st.info("No case quantity data available for the case-based performance matrix.")
-            st.divider()
-
-            st.subheader("Dispatch vs. Delivery Performance")
-            col1_perf, col2_perf = st.columns(2)
-            with col1_perf:
-                matched_df = filtered_df[filtered_df['Billing Status'] == 'Matched']
-                if not matched_df.empty:
-                    st.altair_chart(create_grouped_bar_chart(matched_df, '✅ Matched Orders'), use_container_width=True)
-                else:
-                    st.info("No Matched orders data to display.")
-
-            with col2_perf:
-                mismatched_df = filtered_df[filtered_df['Billing Status'] == 'Mismatched']
-                if not mismatched_df.empty:
-                    st.altair_chart(create_grouped_bar_chart(mismatched_df, '❌ Cross Billed Orders'), use_container_width=True)
-                else:
-                    st.info("No Cross Billed orders data to display.")
-
+            
             st.subheader("Download Detailed Logistics Data")
             csv_log_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Filtered Logistics Data as CSV", data=csv_log_data, file_name="dispatch_delivery_data.csv", mime="text/csv")
