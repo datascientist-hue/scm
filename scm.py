@@ -244,17 +244,32 @@ if data:
     # =================================================================================
 
     # --- Stock Analysis Data ---
+    # =================================================================================
+    # --- FIX APPLIED HERE ---
+    # The merge was failing due to a KeyError and incorrect column names for the join.
+    # 1. Changed data['stockavailability'] to data['stockav'] to match the likely key in your secrets file.
+    # 2. Modified the pd.merge to use left_on='ItemCode' (from stockav) and right_on='Item No.' (from skulist).
+    # =================================================================================
     columns_to_merge = ['Item No.', 'Classification', 'Remark', 'Vendor']
     if 'Item Description' in data['skulist'].columns:
         columns_to_merge.append('Item Description')
     else:
         st.warning("Warning: 'Item Description' column not found in skulist data. Using 'Item No.' as fallback for SKU-level views.")
-
-    stock_enriched = pd.merge(data['stockav'], data['skulist'][columns_to_merge], on='Item No.', how='left')
-    stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='Warehouse Code', right_on='WH Code', how='left')
+    
+    # Corrected merge operation
+    stock_enriched = pd.merge(
+        data['stockav'], # FIX 1: Using 'stockav' to prevent KeyError
+        data['skulist'][columns_to_merge],
+        left_on='ItemCode', # FIX 2: Key in the left dataframe (stockav)
+        right_on='Item No.', # FIX 2: Key in the right dataframe (skulist)
+        how='left'
+    )
+    # --- END OF FIX ---
+    
+    stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='WhsCode', right_on='WH Code', how='left')
 
     tn_depots = ["CHN_N", "ERD", "TRI", "TUTICOR"]
-    stock_enriched['State_Group'] = np.where(stock_enriched['Warehouse Code'].isin(tn_depots), 'TN', 'Other than TN')
+    stock_enriched['State_Group'] = np.where(stock_enriched['WhsCode'].isin(tn_depots), 'TN', 'Other than TN')
 
     numeric_cols_stock = ['Stock Value', 'Qty in Cases']
     for col in numeric_cols_stock:
@@ -264,9 +279,9 @@ if data:
                 errors='coerce'
             ).fillna(0)
     
-    categorical_cols_stock = ['RSM/ DSM', 'Classification', 'Prod Cat', 'Remark', 'Warehouse Code', 'Vendor']
-    if 'Item Description' in stock_enriched.columns:
-        categorical_cols_stock.append('Item Description')
+    categorical_cols_stock = ['RSM/ DSM', 'Classification', 'Prod Cat', 'Remark', 'WhsCode', 'Vendor']
+    if 'ItemName' in stock_enriched.columns:
+        categorical_cols_stock.append('ItemName')
 
     for col in categorical_cols_stock:
         if col in stock_enriched.columns:
@@ -282,19 +297,19 @@ if data:
         open_po_data['Net Rate'].astype(str).str.replace(r'[^\d.]', '', regex=True),
         errors='coerce'
     ).fillna(0)
-    open_po_data['Customer/Vendor Name'].fillna("Unknown Vendor", inplace=True)
+    open_po_data['CardName'].fillna("Unknown Vendor", inplace=True)
     open_po_data['Open Order Value'] = open_po_data['Net Rate']
-    if 'Posting Date' in open_po_data.columns:
-        open_po_data['Posting Date'] = pd.to_datetime(open_po_data['Posting Date'], errors='coerce', dayfirst=True)
+    if 'DocDate' in open_po_data.columns:
+        open_po_data['DocDate'] = pd.to_datetime(open_po_data['DocDate'], errors='coerce', dayfirst=True)
         current_date = pd.Timestamp.now().normalize()
-        open_po_data['Open PO Aging (Days)'] = (current_date - open_po_data['Posting Date']).dt.days
+        open_po_data['Open PO Aging (Days)'] = (current_date - open_po_data['DocDate']).dt.days
         open_po_data['Open PO Aging (Days)'].fillna(0, inplace=True)
         open_po_data['Open PO Aging (Days)'] = open_po_data['Open PO Aging (Days)'].astype(int)
 
     # --- Stock Aging Data ---
     stock_aging_data = data['stockaging'].copy()
     numeric_cols_aging = [
-        'MRP', 'No. of Items per Sales Unit', 'In Stock', 'Inventory Value',
+        'MRP', 'NumInsale', 'OnHand', 'StockValue',
         'TotalQty', 'TotalValue', '0-15Qty', '0-15Value', '16-30Qty', '16-30Value',
         '31-60Qty', '31-60Value', '61-90Qty', '61-90Value', '91-180Qty', '91-180Value',
         '181-360Qty', '181-360Value', '361-720Qty', '361-720Value', '721+Qty', '721+DaysValue'
@@ -307,7 +322,7 @@ if data:
             )
     stock_aging_data[numeric_cols_aging] = stock_aging_data[numeric_cols_aging].fillna(0)
 
-    for col in ['Brand', 'State', 'Warehouse Code', 'ProductGroup']:
+    for col in ['Brand', 'State', 'WhsCode', 'ProductGroup']:
         if col in stock_aging_data.columns:
             stock_aging_data[col].fillna("Unknown", inplace=True)
 
@@ -316,10 +331,10 @@ if data:
     dd_df = data['dd'].copy()
     depot_mapping_df = data['depot_mapping'].copy()
 
-    if 'BP Code' in db_master_df.columns:
-        db_master_df['BP Code'] = db_master_df['BP Code'].str.strip()
-    if 'Customer/Vendor Code' in dd_df.columns:
-        dd_df['Customer/Vendor Code'] = dd_df['Customer/Vendor Code'].str.strip()
+    if 'CardCode' in db_master_df.columns:
+        db_master_df['CardCode'] = db_master_df['CardCode'].str.strip()
+    if 'CardCode' in dd_df.columns:
+        dd_df['CardCode'] = dd_df['CardCode'].str.strip()
 
     if 'Qty in Cases' in dd_df.columns:
         dd_df['Qty in Cases'] = pd.to_numeric(
@@ -328,32 +343,32 @@ if data:
         ).fillna(0)
     else:
         dd_df['Qty in Cases'] = 0
-        st.warning("Warning: 'Qty in Cases' column not found in Dispatch & Delivery data (dd.csv). Case-based metrics will be zero.")
+        st.warning("Warning: 'Qty in Cases' column not found in Dispatch & Delivery data. Case-based metrics will be zero.")
 
     db_master_df = db_master_df.loc[:, ~db_master_df.columns.duplicated()]
 
-    db_master_df = pd.merge(db_master_df, depot_mapping_df, on='Depot to Bill', how='left')
-    db_master_df['Final Depot to Bill'] = db_master_df['Updated_depot_to_bill'].fillna(db_master_df['Depot to Bill'])
+    db_master_df = pd.merge(db_master_df, depot_mapping_df, left_on='U_Depot', right_on='Depot to Bill', how='left')
+    db_master_df['Final Depot to Bill'] = db_master_df['Updated_depot_to_bill'].fillna(db_master_df['U_Depot'])
 
     dispatch_delivery_df = pd.merge(
-        left=dd_df, right=db_master_df[['BP Code', 'Final Depot to Bill']],
-        left_on='Customer/Vendor Code', right_on='BP Code', how='left'
+        left=dd_df, right=db_master_df[['CardCode', 'Final Depot to Bill']],
+        left_on='CardCode', right_on='CardCode', how='left'
     )
     dispatch_delivery_df['Billing Status'] = np.where(
-        dispatch_delivery_df['Warehouse Code'] == dispatch_delivery_df['Final Depot to Bill'], 'Matched', 'Mismatched'
+        dispatch_delivery_df['WhsCode'] == dispatch_delivery_df['Final Depot to Bill'], 'Matched', 'Mismatched'
     )
 
-    date_columns = ['Posting Date', 'LR/Dispatch Date', 'Delivery Date']
+    date_columns = ['DocDate', 'LR/Dispatch Date', 'U_Delivery_Date']
     for col in date_columns:
         dispatch_delivery_df[col] = pd.to_datetime(dispatch_delivery_df[col], errors='coerce', dayfirst=True)
 
     current_date = pd.Timestamp('today').normalize()
 
     end_date_for_dispatch = dispatch_delivery_df['LR/Dispatch Date'].fillna(current_date)
-    dispatch_delivery_df['Dispatch Days'] = (end_date_for_dispatch - dispatch_delivery_df['Posting Date']).dt.days
+    dispatch_delivery_df['Dispatch Days'] = (end_date_for_dispatch - dispatch_delivery_df['DocDate']).dt.days
 
-    end_date_for_delivery = dispatch_delivery_df['Delivery Date'].fillna(current_date)
-    start_date_for_delivery = dispatch_delivery_df['LR/Dispatch Date'].fillna(dispatch_delivery_df['Posting Date'])
+    end_date_for_delivery = dispatch_delivery_df['U_Delivery_Date'].fillna(current_date)
+    start_date_for_delivery = dispatch_delivery_df['LR/Dispatch Date'].fillna(dispatch_delivery_df['DocDate'])
     dispatch_delivery_df['Delivery Days'] = (end_date_for_delivery - start_date_for_delivery).dt.days
 
 
@@ -407,7 +422,7 @@ if data:
         if not filtered_stock_df.empty:
             if view_selection in ["By Depot", "By DSM"]:
                 try:
-                    group_by_col = "Warehouse Code" if view_selection == "By Depot" else "RSM/ DSM"
+                    group_by_col = "WhsCode" if view_selection == "By Depot" else "RSM/ DSM"
                     chart_data = filtered_stock_df.groupby(group_by_col).agg({
                         'Stock Value': 'sum', 'Qty in Cases': 'sum'
                     }).reset_index()
@@ -429,25 +444,31 @@ if data:
                 csv_data = convert_df_to_csv(filtered_stock_df)
                 st.download_button(label="Download Full Data as CSV", data=csv_data, file_name="stock_analysis_full_data.csv", mime="text/csv")
             else:
-                sku_col = 'SKU' if 'SKU' in filtered_stock_df.columns else 'Item No.'
+                # UPDATED: Changed fallback to 'ItemCode' for consistency
+                sku_col = 'SKU' if 'SKU' in filtered_stock_df.columns else 'ItemCode'
                 
                 summary_cols_map = {
-                    "By Depot": ['Warehouse Code', 'RSM/ DSM'],
-                    "By Product Category": ['Prod Cat', 'Classification','Warehouse Code' ,sku_col],
+                    "By Depot": ['WhsCode', 'RSM/ DSM'],
+                    "By Product Category": ['Prod Cat', 'Classification','WhsCode' ,sku_col],
                     "By Vendor": ['Vendor'],
                     "By DSM": ['RSM/ DSM']
                 }
                 summary_cols = summary_cols_map.get(view_selection)
                 if summary_cols:
-                    summary_df = filtered_stock_df.groupby(summary_cols).agg({'Stock Value': 'sum', 'Qty in Cases': 'sum'}).reset_index()
-                    st.dataframe(summary_df.style.format({'Stock Value': format_indian_currency, 'Qty in Cases': "{:,.0f}"}))
-                    csv_data = convert_df_to_csv(summary_df)
-                    st.download_button(
-                        label=f"Download Summary ({view_selection}) as CSV",
-                        data=csv_data,
-                        file_name=f"stock_summary_{view_selection.replace(' ', '_').lower()}.csv",
-                        mime="text/csv"
-                    )
+                    # Ensure all columns exist before grouping
+                    existing_summary_cols = [col for col in summary_cols if col in filtered_stock_df.columns]
+                    if existing_summary_cols:
+                        summary_df = filtered_stock_df.groupby(existing_summary_cols).agg({'Stock Value': 'sum', 'Qty in Cases': 'sum'}).reset_index()
+                        st.dataframe(summary_df.style.format({'Stock Value': format_indian_currency, 'Qty in Cases': "{:,.0f}"}))
+                        csv_data = convert_df_to_csv(summary_df)
+                        st.download_button(
+                            label=f"Download Summary ({view_selection}) as CSV",
+                            data=csv_data,
+                            file_name=f"stock_summary_{view_selection.replace(' ', '_').lower()}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning(f"Could not create summary view for '{view_selection}' as required columns are missing.")
         else:
             st.warning("No data available for the selected filters.")
 
@@ -458,8 +479,8 @@ if data:
     elif page == "🚚 Open Purchase Orders":
         st.sidebar.header("Open PO Filters")
         st.sidebar.subheader("Filter by Date")
-        if 'Posting Date' in open_po_data.columns and not open_po_data['Posting Date'].dropna().empty:
-            min_date, max_date = open_po_data['Posting Date'].min().to_pydatetime().date(), open_po_data['Posting Date'].max().to_pydatetime().date()
+        if 'DocDate' in open_po_data.columns and not open_po_data['DocDate'].dropna().empty:
+            min_date, max_date = open_po_data['DocDate'].min().to_pydatetime().date(), open_po_data['DocDate'].max().to_pydatetime().date()
             from_date = st.sidebar.date_input("From Posting Date", value=min_date, min_value=min_date, max_value=max_date)
             to_date = st.sidebar.date_input("To Posting Date", value=max_date, min_value=min_date, max_value=max_date)
         else:
@@ -467,19 +488,19 @@ if data:
             st.sidebar.info("Posting Date column not available for filtering.")
         st.sidebar.divider()
         st.sidebar.subheader("Other Filters")
-        vendor_options = ["All"] + sorted(open_po_data['Customer/Vendor Name'].unique().tolist())
+        vendor_options = ["All"] + sorted(open_po_data['CardName'].unique().tolist())
         selected_vendor = st.sidebar.selectbox("Select a Vendor:", options=vendor_options)
-        sku_options = ["All"] + sorted(open_po_data['Item/Service Description'].unique().tolist())
+        sku_options = ["All"] + sorted(open_po_data['Dscription'].unique().tolist())
         select_sku = st.sidebar.selectbox("Select a SKU:", options=sku_options)
         st.header("Pending Deliveries by Vendor (Open POs)")
         filtered_po_data = open_po_data.copy()
         if from_date and to_date:
             from_datetime, to_datetime = pd.to_datetime(from_date), pd.to_datetime(to_date)
-            filtered_po_data = filtered_po_data[(filtered_po_data['Posting Date'] >= from_datetime) & (filtered_po_data['Posting Date'] <= to_datetime)]
+            filtered_po_data = filtered_po_data[(filtered_po_data['DocDate'] >= from_datetime) & (filtered_po_data['DocDate'] <= to_datetime)]
         if selected_vendor != "All":
-            filtered_po_data = filtered_po_data[filtered_po_data['Customer/Vendor Name'] == selected_vendor]
+            filtered_po_data = filtered_po_data[filtered_po_data['CardName'] == selected_vendor]
         if select_sku != "All":
-            filtered_po_data = filtered_po_data[filtered_po_data['Item/Service Description'] == select_sku]
+            filtered_po_data = filtered_po_data[filtered_po_data['Dscription'] == select_sku]
         st.subheader("Key Open PO Metrics")
         total_open_value = filtered_po_data['Open Order Value'].sum()
         total_open_qty = filtered_po_data['Qty in Cases'].sum()
@@ -488,17 +509,17 @@ if data:
         col2_po.metric("Total Open Quantity in Cases", f"{total_open_qty:,.0f}")
         st.subheader("Open Order Value by Vendor Name")
         if not filtered_po_data.empty:
-            vendor_summary = filtered_po_data.groupby('Customer/Vendor Name')['Open Order Value'].sum().reset_index()
+            vendor_summary = filtered_po_data.groupby('CardName')['Open Order Value'].sum().reset_index()
             vendor_summary['Value (L)'] = vendor_summary['Open Order Value'] / 1_00_000
             vendor_summary['text_label'] = vendor_summary['Value (L)'].apply(lambda x: f'{x:.2f}L')
-            fig_po = px.bar(vendor_summary, x='Customer/Vendor Name', y='Value (L)', title='Total Open Order Value by Vendor', text='text_label', labels={'Value (L)': 'Total Value (in Lakhs)', 'Customer/Vendor Name': 'Vendor'},color_discrete_sequence=['#9673FF'])
+            fig_po = px.bar(vendor_summary, x='CardName', y='Value (L)', title='Total Open Order Value by Vendor', text='text_label', labels={'Value (L)': 'Total Value (in Lakhs)', 'CardName': 'Vendor'},color_discrete_sequence=['#9673FF'])
             fig_po.update_traces(textposition="outside")
             st.plotly_chart(fig_po, use_container_width=True)
             st.subheader("Open PO Aging Summary")
             if 'Open PO Aging (Days)' in filtered_po_data.columns and not filtered_po_data.empty:
                 bins, labels = [-1, 10, 20, 30, 40, float('inf')], ['0-10 Days', '11-20 Days', '21-30 Days', '31-40 Days', '41+ Days']
                 filtered_po_data['Aging Bucket'] = pd.cut(filtered_po_data['Open PO Aging (Days)'], bins=bins, labels=labels, right=True)
-                aging_summary = filtered_po_data.groupby('Aging Bucket').agg(num_pos=('Document Number', 'nunique'), total_value=('Open Order Value', 'sum')).reset_index()
+                aging_summary = filtered_po_data.groupby('Aging Bucket').agg(num_pos=('DocNum', 'nunique'), total_value=('Open Order Value', 'sum')).reset_index()
                 aging_summary.rename(columns={'Aging Bucket': 'Aging Category', 'num_pos': 'Number of POs', 'total_value': 'Total Open Value'}, inplace=True)
                 if not aging_summary.empty:
                     st.dataframe(aging_summary.style.format({'Total Open Value': format_indian_currency_kpi}), use_container_width=True, hide_index=True)
@@ -518,7 +539,7 @@ if data:
     elif page == "🧾 GRN vs. AP Reconciliation":
         st.sidebar.info("This page does not have any filters.")
         st.header("GRN vs. Accounts Payable Reconciliation")
-        grn_docs, ap_grns = data['grn']['Document Number'].dropna().unique(), data['apbooking']['GRN No.'].dropna().unique()
+        grn_docs, ap_grns = data['grn']['DocNum'].dropna().unique(), data['apbooking']['GRN No.'].dropna().unique()
         matched_grns, unmatched_grns = set(grn_docs).intersection(set(ap_grns)), set(grn_docs).difference(set(ap_grns))
         st.subheader("Reconciliation Summary")
         col1_grn, col2_grn, col3_grn = st.columns(3)
@@ -528,12 +549,14 @@ if data:
         tab1, tab2 = st.tabs(["Unmatched GRNs (Pending AP Booking)", "Matched GRNs"])
         with tab1:
             st.subheader("Details of Unmatched GRNs")
-            unmatched_df = data['grn'][data['grn']['Document Number'].isin(list(unmatched_grns))]
+            unmatched_df = data['grn'][data['grn']['DocNum'].isin(list(unmatched_grns))]
+            st.dataframe(unmatched_df)
             csv_unmatched_grn = convert_df_to_csv(unmatched_df)
             st.download_button(label="Download Unmatched GRNs as CSV", data=csv_unmatched_grn, file_name="unmatched_grns.csv", mime="text/csv")
         with tab2:
             st.subheader("Details of Matched GRNs")
-            matched_df = data['grn'][data['grn']['Document Number'].isin(list(matched_grns))]
+            matched_df = data['grn'][data['grn']['DocNum'].isin(list(matched_grns))]
+            st.dataframe(matched_df)
             csv_matched_grn = convert_df_to_csv(matched_df)
             st.download_button(label="Download Matched GRNs as CSV", data=csv_matched_grn, file_name="matched_grns.csv", mime="text/csv")
 
@@ -548,13 +571,13 @@ if data:
         state_options = ['All'] + list(stock_aging_data['State'].unique())
         selected_states_option = st.sidebar.multiselect("Select State(s)", state_options, default='All')
         selected_states = list(stock_aging_data['State'].unique()) if 'All' in selected_states_option else selected_states_option
-        warehouse_options = ['All'] + list(stock_aging_data['Warehouse Code'].unique())
+        warehouse_options = ['All'] + list(stock_aging_data['WhsCode'].unique())
         selected_warehouses_option = st.sidebar.multiselect("Select Warehouse Code(s)", warehouse_options, default='All')
-        selected_warehouses = list(stock_aging_data['Warehouse Code'].unique()) if 'All' in selected_warehouses_option else selected_warehouses_option
+        selected_warehouses = list(stock_aging_data['WhsCode'].unique()) if 'All' in selected_warehouses_option else selected_warehouses_option
         prod_group_options = ['All'] + list(stock_aging_data['ProductGroup'].unique())
         selected_prod_groups_option = st.sidebar.multiselect("Select SKU", prod_group_options, default='All')
         selected_prod_groups = list(stock_aging_data['ProductGroup'].unique()) if 'All' in selected_prod_groups_option else selected_prod_groups_option
-        filtered_df = stock_aging_data[stock_aging_data["Brand"].isin(selected_brands) & stock_aging_data["State"].isin(selected_states) & stock_aging_data["Warehouse Code"].isin(selected_warehouses) & stock_aging_data["ProductGroup"].isin(selected_prod_groups)]
+        filtered_df = stock_aging_data[stock_aging_data["Brand"].isin(selected_brands) & stock_aging_data["State"].isin(selected_states) & stock_aging_data["WhsCode"].isin(selected_warehouses) & stock_aging_data["ProductGroup"].isin(selected_prod_groups)]
         st.title("📦 Interactive Stock Aging Dashboard")
         st.markdown("Use the filters on the left to analyze the inventory data.")
         total_value, total_qty, aged_value = filtered_df["TotalValue"].sum(), filtered_df["TotalQty"].sum(), filtered_df[["181-360Value", "361-720Value", "721+DaysValue"]].sum().sum()
@@ -657,8 +680,8 @@ if data:
         st.header("Billing and Logistics Performance")
         st.sidebar.header("Logistics Filters")
         st.sidebar.subheader("Filter by Date")
-        if 'Posting Date' in dispatch_delivery_df.columns and not dispatch_delivery_df['Posting Date'].dropna().empty:
-            min_date_dd, max_date_dd = dispatch_delivery_df['Posting Date'].min().to_pydatetime().date(), dispatch_delivery_df['Posting Date'].max().to_pydatetime().date()
+        if 'DocDate' in dispatch_delivery_df.columns and not dispatch_delivery_df['DocDate'].dropna().empty:
+            min_date_dd, max_date_dd = dispatch_delivery_df['DocDate'].min().to_pydatetime().date(), dispatch_delivery_df['DocDate'].max().to_pydatetime().date()
             from_date_dd = st.sidebar.date_input("From Posting Date", value=min_date_dd, min_value=min_date_dd, max_value=max_date_dd, key="dd_from_date")
             to_date_dd = st.sidebar.date_input("To Posting Date", value=max_date_dd, min_value=min_date_dd, max_value=max_date_dd, key="dd_to_date")
         else:
@@ -668,12 +691,12 @@ if data:
         st.sidebar.subheader("Other Filters")
         if from_date_dd and to_date_dd:
             from_datetime_dd, to_datetime_dd = pd.to_datetime(from_date_dd), pd.to_datetime(to_date_dd)
-            date_filtered_df = dispatch_delivery_df[(dispatch_delivery_df['Posting Date'] >= from_datetime_dd) & (dispatch_delivery_df['Posting Date'] <= to_datetime_dd)]
+            date_filtered_df = dispatch_delivery_df[(dispatch_delivery_df['DocDate'] >= from_datetime_dd) & (dispatch_delivery_df['DocDate'] <= to_datetime_dd)]
         else:
             date_filtered_df = dispatch_delivery_df.copy()
-        unique_depots = sorted(date_filtered_df['Warehouse Code'].dropna().unique())
+        unique_depots = sorted(date_filtered_df['WhsCode'].dropna().unique())
         depot_selection = st.sidebar.multiselect('Select Depot(s) to Analyze:', options=unique_depots, default=[])
-        filtered_df = date_filtered_df[date_filtered_df['Warehouse Code'].isin(depot_selection)] if depot_selection else date_filtered_df.copy()
+        filtered_df = date_filtered_df[date_filtered_df['WhsCode'].isin(depot_selection)] if depot_selection else date_filtered_df.copy()
         if filtered_df.empty:
             st.warning("No data available for the selected filters.")
         else:
@@ -704,20 +727,20 @@ if data:
             kpi6.metric("🐌 Delivered > 3 Days", f"{delivery_gt3:,}", delta=delivery_gt3_pct, delta_color="inverse")
             st.divider()
             st.subheader("Depot Performance Matrix By Orders")
-            depot_summary = dispatch_delivery_df.groupby('Warehouse Code').agg(total_orders=('Warehouse Code', 'size'), matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())).reset_index()
+            depot_summary = dispatch_delivery_df.groupby('WhsCode').agg(total_orders=('WhsCode', 'size'), matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())).reset_index()
             depot_summary['match_rate_%'], depot_summary['mismatch_rate_%'] = (depot_summary['matched_orders'] / depot_summary['total_orders']) * 100, (depot_summary['mismatched_orders'] / depot_summary['total_orders']) * 100
-            depot_summary = depot_summary.rename(columns={'Warehouse Code': 'Depot', 'total_orders': 'Total Orders', 'matched_orders': 'Matched', 'mismatched_orders': 'Cross Billed', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
+            depot_summary = depot_summary.rename(columns={'WhsCode': 'Depot', 'total_orders': 'Total Orders', 'matched_orders': 'Matched', 'mismatched_orders': 'Cross Billed', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
             depot_summary = depot_summary.sort_values(by='Match Rate', ascending=False)
             st.dataframe(depot_summary.style.format({'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
             st.subheader("Depot Performance Matrix By Cases")
             if 'Qty in Cases' in dispatch_delivery_df.columns and dispatch_delivery_df['Qty in Cases'].sum() > 0:
-                depot_summary_cases_raw = dispatch_delivery_df.groupby(['Warehouse Code', 'Billing Status'])['Qty in Cases'].sum().unstack(fill_value=0)
+                depot_summary_cases_raw = dispatch_delivery_df.groupby(['WhsCode', 'Billing Status'])['Qty in Cases'].sum().unstack(fill_value=0)
                 if 'Matched' not in depot_summary_cases_raw.columns: depot_summary_cases_raw['Matched'] = 0
                 if 'Mismatched' not in depot_summary_cases_raw.columns: depot_summary_cases_raw['Mismatched'] = 0
                 depot_summary_cases = depot_summary_cases_raw.reset_index()
                 depot_summary_cases['total_cases'] = depot_summary_cases['Matched'] + depot_summary_cases['Mismatched']
                 depot_summary_cases['match_rate_%'], depot_summary_cases['mismatch_rate_%'] = (depot_summary_cases['Matched'] / depot_summary_cases['total_cases'] * 100).fillna(0), (depot_summary_cases['Mismatched'] / depot_summary_cases['total_cases'] * 100).fillna(0)
-                depot_summary_cases = depot_summary_cases.rename(columns={'Warehouse Code': 'Depot', 'total_cases': 'Total Cases', 'Matched': 'Matched Cases', 'Mismatched': 'Cross Billed Cases', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
+                depot_summary_cases = depot_summary_cases.rename(columns={'WhsCode': 'Depot', 'total_cases': 'Total Cases', 'Matched': 'Matched Cases', 'Mismatched': 'Cross Billed Cases', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
                 depot_summary_cases = depot_summary_cases.sort_values(by='Match Rate', ascending=False)
                 depot_summary_cases = depot_summary_cases[['Depot', 'Total Cases', 'Matched Cases', 'Cross Billed Cases', 'Match Rate', 'Cross Billed Rate']]
                 st.dataframe(depot_summary_cases.style.format({'Total Cases': '{:,.0f}', 'Matched Cases': '{:,.0f}', 'Cross Billed Cases': '{:,.0f}', 'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
