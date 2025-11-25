@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import altair as alt
-from datetime import datetime
+from datetime import datetime, timezone, timedelta # MODIFIED: Imported timezone and timedelta
 import ftplib
 import io
 
@@ -72,11 +72,16 @@ def format_indian_number(num):
     return f"{formatted_other_digits},{last_three}"
 
 
-# --- MODIFIED: Added underscore to the argument to fix the caching error ---
-@st.cache_data(ttl=1200)
-def load_data_from_ftp(_ftp_paths): # <-- FIX IS HERE
-    """Connects to an FTP server, downloads files into memory, and loads them into pandas DataFrames."""
+# --- MODIFIED: Updated to handle timezones correctly ---
+@st.cache_data(ttl=300) # Adjusted cache to 5 minutes to match FTP push frequency
+def load_data_from_ftp(_ftp_paths):
+    """
+    Connects to an FTP server, downloads files, gets their last modified times,
+    and loads them into pandas DataFrames.
+    Returns a tuple of (data_frames, file_timestamps).
+    """
     data_frames = {}
+    file_timestamps = {}  # To store the last modified time for each file
     ftp_host = st.secrets["ftp"]["host"]
     ftp_user = st.secrets["ftp"]["user"]
     ftp_pass = st.secrets["ftp"]["password"]
@@ -86,7 +91,32 @@ def load_data_from_ftp(_ftp_paths): # <-- FIX IS HERE
         with ftplib.FTP(ftp_host, ftp_user, ftp_pass) as ftp:
             st.info("🔌 Successfully connected to FTP server...")
 
-            for name, path_on_ftp in _ftp_paths.items(): # <-- AND HERE
+            for name, path_on_ftp in _ftp_paths.items():
+                # --- MODIFICATION START: Correct timezone handling ---
+                try:
+                    # The response format for MDTM is "213 YYYYMMDDHHMMSS"
+                    mdtm_response = ftp.sendcmd(f'MDTM {path_on_ftp}')
+                    timestamp_str = mdtm_response.split(' ')[1].strip()
+
+                    # 1. Parse the string into a naive datetime object
+                    naive_dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+
+                    # 2. Make it timezone-aware by setting its timezone to UTC
+                    utc_dt = naive_dt.replace(tzinfo=timezone.utc)
+
+                    # 3. Define the Indian Standard Time (IST) timezone (UTC+5:30)
+                    ist_tz = timezone(timedelta(hours=5, minutes=30))
+
+                    # 4. Convert the UTC datetime to the IST timezone
+                    mod_time_ist = utc_dt.astimezone(ist_tz)
+
+                    file_timestamps[name] = mod_time_ist
+
+                except Exception as e:
+                    file_timestamps[name] = None
+                    st.warning(f"Could not retrieve last modified time for '{name}': {e}")
+                # --- MODIFICATION END ---
+
                 # Use BytesIO to create an in-memory binary file
                 in_memory_file = io.BytesIO()
                 # Download the file from FTP and write it to the in-memory object
@@ -100,14 +130,30 @@ def load_data_from_ftp(_ftp_paths): # <-- FIX IS HERE
                 data_frames[name] = df
 
         st.success("✅ All data files loaded successfully!")
-        return data_frames
+        return data_frames, file_timestamps
 
     except ftplib.all_errors as e:
         st.error(f"FTP Error: {e}. Please check your credentials and file paths in secrets.toml.")
-        return None
+        return None, None
     except Exception as e:
         st.error(f"An unexpected error occurred while loading data: {e}")
-        return None
+        return None, None
+
+
+# --- NEW: Helper function to display the last refreshed time ---
+def display_last_refreshed(file_keys, timestamps_dict):
+    """
+    Finds the latest timestamp from a list of files and displays it in the sidebar.
+    """
+    relevant_timestamps = [timestamps_dict.get(key) for key in file_keys if timestamps_dict.get(key)]
+    if not relevant_timestamps:
+        st.sidebar.markdown("Last refreshed: *Unknown*")
+        return
+
+    latest_timestamp = max(relevant_timestamps)
+    formatted_timestamp = latest_timestamp.strftime('%d-%b-%Y, %I:%M %p')
+    st.sidebar.markdown(f"Last refreshed: **{formatted_timestamp}**")
+
 
 # --- UPDATED: Helper function for clustered bar charts with data labels ---
 def create_grouped_bar_chart(df, title):
@@ -217,7 +263,7 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
 
     # Set y-axes titles
     fig.update_yaxes(title_text="<b>Stock Value (in ₹ Lakhs)</b>", secondary_y=False) # Updated Y-axis title
-    fig.update_yaxes(title_text="<b>Qty in Cases</b>", secondary_y=True)
+    fig.update_yaxes(title_text="<b>Qty in Cases</b>", tickformat=",")
 
     return fig
 
@@ -233,13 +279,14 @@ def convert_df_to_csv(df):
 
 st.title("Supply Chain & Finance Analytics Dashboard")
 
-# Load data using the new FTP function
+# --- MODIFIED: Unpack both data and timestamps ---
 ftp_file_paths = st.secrets["ftp"]["paths"]
-data = load_data_from_ftp(ftp_file_paths) # <-- Function call remains the same
+data, file_timestamps = load_data_from_ftp(ftp_file_paths)
 
 
 # --- Main Application Logic ---
-if data:
+# --- MODIFIED: Check if both data and timestamps are loaded ---
+if data and file_timestamps:
     # =================================================================================
     # --- DATA PREPARATION (Done once upfront for all pages) ---
     # =================================================================================
@@ -262,33 +309,17 @@ if data:
 
     stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='WhsCode', right_on='WH Code', how='left')
 
-    # =================================================================================
-    # --- START OF INDENTATION FIX ---
-    # This entire block was indented incorrectly in your script.
-    # It has been moved to the correct level, inside the `if data:` block.
-    # =================================================================================
     tn_depots = ["CHN_N", "ERD", "TRI", "TUTICOR"]
     Damage_goods =["DBAN","DBHIWA","DCHN_N","DCUT","DEcom","DERD","DHYD_New","DIND","DKOL","DNAG","DTRI","DTUTICOR"]
     transit=['TCHN','TCHN_N','TEcom','THYD_New','TIND','TTRI','TTUTICOR','TTUTMFD']
 
-    # Define the conditions and the corresponding choices for np.select
     conditions = [
         stock_enriched['WhsCode'].isin(tn_depots),
         stock_enriched['WhsCode'].isin(Damage_goods),
         stock_enriched['WhsCode'].isin(transit)
     ]
-
-    choices = [
-        'TN',
-        'Damage_goods',
-        'transit'
-    ]
-
-    # Use np.select to apply the conditions
-    stock_enriched['State_Group'] = np.select(conditions, choices, default='Other than TN')
-    # =================================================================================
-    # --- END OF INDENTATION FIX ---
-    # =================================================================================
+    choices = ['TN', 'Damage_goods', 'transit']
+    stock_enriched['State_Group'] = np.select(conditions, choices, default='OTN')
 
     numeric_cols_stock = ['Stock Value', 'Qty in Cases']
     for col in numeric_cols_stock:
@@ -405,9 +436,12 @@ if data:
     # --- PAGE 1: Stock Analysis ---
     # =================================================================================
     if page == "📦 Stock Analysis":
+        # --- ADDITION: Display last refreshed date ---
+        display_last_refreshed(['stockav', 'skulist', 'dsmmaster'], file_timestamps)
         st.sidebar.header("Stock Analysis Filters")
-        state_group_options = ["All"] + sorted(stock_enriched['State_Group'].unique().tolist())
-        selected_state_group = st.sidebar.selectbox("Filter by Region:", options=state_group_options)
+        
+        state_group_options = sorted(stock_enriched['State_Group'].unique().tolist())
+        selected_state_group = st.sidebar.multiselect("Filter by Region:", options=state_group_options, default=[])
         dsm_options = ["All"] + sorted(stock_enriched['RSM/ DSM'].unique().tolist())
         selected_dsm = st.sidebar.selectbox("Filter by DSM/RSM:", options=dsm_options)
         class_options = ["All"] + sorted(stock_enriched['Classification'].unique().tolist())
@@ -419,8 +453,8 @@ if data:
         selected_remark = st.sidebar.selectbox("Filter by TPU/TMD:", options=remark_options)
         st.header("Stock Analysis")
         filtered_stock_df = stock_enriched.copy()
-        if selected_state_group != "All":
-            filtered_stock_df = filtered_stock_df[filtered_stock_df['State_Group'] == selected_state_group]
+        if selected_state_group:
+           filtered_stock_df = filtered_stock_df[filtered_stock_df['State_Group'].isin (selected_state_group)]
         if selected_dsm != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['RSM/ DSM'] == selected_dsm]
         if selected_class != "All":
@@ -447,7 +481,7 @@ if data:
                     }).reset_index()
                     chart_data = chart_data.sort_values(by='Stock Value', ascending=False)
                     chart_data['value_label'] = (chart_data['Stock Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
-                    chart_data['qty_label'] = chart_data['Qty in Cases'].apply(format_indian_number)
+                    chart_data['qty_label'] = chart_data['Qty in Cases']
                     title_text = f"Stock Value and Quantity {view_selection}"
                     fig = create_combo_chart(
                         df=chart_data, x_col=group_by_col, bar_col='Stock Value',
@@ -495,7 +529,10 @@ if data:
     # --- PAGE 2: Open Purchase Orders ---
     # =================================================================================
     elif page == "🚚 Open Purchase Orders":
+        # --- ADDITION: Display last refreshed date ---
+        display_last_refreshed(['openpo'], file_timestamps)
         st.sidebar.header("Open PO Filters")
+        
         st.sidebar.subheader("Filter by Date")
         if 'DocDate' in open_po_data.columns and not open_po_data['DocDate'].dropna().empty:
             min_date, max_date = open_po_data['DocDate'].min().to_pydatetime().date(), open_po_data['DocDate'].max().to_pydatetime().date()
@@ -556,7 +593,10 @@ if data:
     # --- PAGE 3: GRN vs. AP Reconciliation ---
     # =================================================================================
     elif page == "🧾 GRN vs. AP Reconciliation":
+        # --- ADDITION: Display last refreshed date ---
+        display_last_refreshed(['grn', 'apbooking'], file_timestamps)
         st.sidebar.info("This page does not have any filters.")
+        
         st.header("GRN vs. Accounts Payable Reconciliation")
         grn_docs, ap_grns = data['grn']['DocNum'].dropna().unique(), data['apbooking']['GRN No.'].dropna().unique()
         matched_grns, unmatched_grns = set(grn_docs).intersection(set(ap_grns)), set(grn_docs).difference(set(ap_grns))
@@ -583,6 +623,8 @@ if data:
     # --- PAGE 4: Stock Aging ---
     # =================================================================================
     elif page == "📈 Stock Aging":
+        # --- ADDITION: Display last refreshed date ---
+        display_last_refreshed(['stockaging'], file_timestamps)
         st.sidebar.header("Dashboard Filters")
 
         filtered_df = stock_aging_data.copy()
@@ -708,7 +750,10 @@ if data:
     # --- PAGE 5: Dispatch & Delivery ---
     # =================================================================================
     elif page == "🚚 Dispatch & Delivery":
+        # --- ADDITION: Display last refreshed date ---
+        display_last_refreshed(['dbmaster', 'dd', 'depot_mapping'], file_timestamps)
         st.header("Billing and Logistics Performance")
+        
         st.sidebar.header("Logistics Filters")
         st.sidebar.subheader("Filter by Date")
         if 'DocDate' in dispatch_delivery_df.columns and not dispatch_delivery_df['DocDate'].dropna().empty:
@@ -822,3 +867,7 @@ if data:
             #st.dataframe(filtered_df)
             csv_log_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Filtered Logistics Data as CSV", data=csv_log_data, file_name="dispatch_delivery_data.csv", mime="text/csv")
+
+else:
+    st.error("Failed to load data from the FTP server. The dashboard cannot be displayed.")
+    st.warning("Please check the FTP connection details in your Streamlit secrets and ensure the server is accessible.")
