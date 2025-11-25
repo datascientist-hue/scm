@@ -73,7 +73,7 @@ def format_indian_number(num):
 
 
 # --- MODIFIED: Added underscore to the argument to fix the caching error ---
-@st.cache_data
+@st.cache_data(ttl=120)
 def load_data_from_ftp(_ftp_paths): # <-- FIX IS HERE
     """Connects to an FTP server, downloads files into memory, and loads them into pandas DataFrames."""
     data_frames = {}
@@ -244,12 +244,6 @@ if data:
     # =================================================================================
 
     # --- Stock Analysis Data ---
-    # =================================================================================
-    # --- FIX APPLIED HERE ---
-    # The merge was failing due to a KeyError and incorrect column names for the join.
-    # 1. Changed data['stockavailability'] to data['stockav'] to match the likely key in your secrets file.
-    # 2. Modified the pd.merge to use left_on='ItemCode' (from stockav) and right_on='Item No.' (from skulist).
-    # =================================================================================
     columns_to_merge = ['Item No.', 'Classification', 'Remark', 'Vendor']
     if 'Item Description' in data['skulist'].columns:
         columns_to_merge.append('Item Description')
@@ -258,18 +252,42 @@ if data:
     
     # Corrected merge operation
     stock_enriched = pd.merge(
-        data['stockav'], # FIX 1: Using 'stockav' to prevent KeyError
+        data['stockav'], 
         data['skulist'][columns_to_merge],
-        left_on='ItemCode', # FIX 2: Key in the left dataframe (stockav)
-        right_on='Item No.', # FIX 2: Key in the right dataframe (skulist)
+        left_on='ItemCode', 
+        right_on='Item No.',
         how='left'
     )
-    # --- END OF FIX ---
     
     stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='WhsCode', right_on='WH Code', how='left')
-
+    
+    # =================================================================================
+    # --- START OF INDENTATION FIX ---
+    # This entire block was indented incorrectly in your script.
+    # It has been moved to the correct level, inside the `if data:` block.
+    # =================================================================================
     tn_depots = ["CHN_N", "ERD", "TRI", "TUTICOR"]
-    stock_enriched['State_Group'] = np.where(stock_enriched['WhsCode'].isin(tn_depots), 'TN', 'Other than TN')
+    Damage_goods =["DBAN","DBHIWA","DCHN_N","DCUT","DEcom","DERD","DHYD_New","DIND","DKOL","DNAG","DTRI","DTUTICOR"]
+    transit=['TCHN','TCHN_N','TEcom','THYD_New','TIND','TTRI','TTUTICOR','TTUTMFD']
+    
+    # Define the conditions and the corresponding choices for np.select
+    conditions = [
+        stock_enriched['WhsCode'].isin(tn_depots),
+        stock_enriched['WhsCode'].isin(Damage_goods),
+        stock_enriched['WhsCode'].isin(transit)
+    ]
+    
+    choices = [
+        'TN',
+        'Damage_goods',
+        'transit'
+    ]
+
+    # Use np.select to apply the conditions
+    stock_enriched['State_Group'] = np.select(conditions, choices, default='Other than TN')
+    # =================================================================================
+    # --- END OF INDENTATION FIX ---
+    # =================================================================================
 
     numeric_cols_stock = ['Stock Value', 'Qty in Cases']
     for col in numeric_cols_stock:
@@ -388,7 +406,7 @@ if data:
     if page == "📦 Stock Analysis":
         st.sidebar.header("Stock Analysis Filters")
         state_group_options = ["All"] + sorted(stock_enriched['State_Group'].unique().tolist())
-        selected_state_group = st.sidebar.selectbox("Filter by State:", options=state_group_options)
+        selected_state_group = st.sidebar.selectbox("Filter by Region:", options=state_group_options)
         dsm_options = ["All"] + sorted(stock_enriched['RSM/ DSM'].unique().tolist())
         selected_dsm = st.sidebar.selectbox("Filter by DSM/RSM:", options=dsm_options)
         class_options = ["All"] + sorted(stock_enriched['Classification'].unique().tolist())
@@ -406,7 +424,7 @@ if data:
             filtered_stock_df = filtered_stock_df[filtered_stock_df['RSM/ DSM'] == selected_dsm]
         if selected_class != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['Classification'] == selected_class]
-        if 'Prod Cat' in filtered_stock_df.columns and selected_prod_cat != "All":
+        if 'Prod Cat' in filtered_stock_df.columns and 'selected_prod_cat' in locals() and selected_prod_cat != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['Prod Cat'] == selected_prod_cat]
         if selected_remark != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['Remark'] == selected_remark]
@@ -441,21 +459,20 @@ if data:
 
             st.subheader(f"Data View: {view_selection}")
             if view_selection == "All Data":
+                #st.dataframe(filtered_stock_df)
                 csv_data = convert_df_to_csv(filtered_stock_df)
                 st.download_button(label="Download Full Data as CSV", data=csv_data, file_name="stock_analysis_full_data.csv", mime="text/csv")
             else:
-                # UPDATED: Changed fallback to 'ItemCode' for consistency
-                sku_col = 'SKU' if 'SKU' in filtered_stock_df.columns else 'ItemCode'
+                sku_col = 'Item Description' if 'Item Description' in filtered_stock_df.columns else 'ItemCode'
                 
                 summary_cols_map = {
                     "By Depot": ['WhsCode', 'RSM/ DSM'],
                     "By Product Category": ['Prod Cat', 'Classification','WhsCode' ,sku_col],
-                    "By Vendor": ['Vendor'],
-                    "By DSM": ['RSM/ DSM']
+                    "By Vendor": ['Vendor', sku_col],
+                    "By DSM": ['RSM/ DSM', 'WhsCode']
                 }
                 summary_cols = summary_cols_map.get(view_selection)
                 if summary_cols:
-                    # Ensure all columns exist before grouping
                     existing_summary_cols = [col for col in summary_cols if col in filtered_stock_df.columns]
                     if existing_summary_cols:
                         summary_df = filtered_stock_df.groupby(existing_summary_cols).agg({'Stock Value': 'sum', 'Qty in Cases': 'sum'}).reset_index()
@@ -527,7 +544,8 @@ if data:
                     st.download_button(label="Download Aging Summary as CSV", data=csv_aging_summary, file_name="open_po_aging_summary.csv", mime="text/csv")
                 else:
                     st.info("No aging data to display for the current selection.")
-            st.subheader("Download Filtered Open PO Details")
+            #st.subheader("Download Filtered Open PO Details")
+            #st.dataframe(filtered_po_data)
             csv_po_data = convert_df_to_csv(filtered_po_data)
             st.download_button(label="Download PO Details as CSV", data=csv_po_data, file_name="open_po_details.csv", mime="text/csv")
         else:
@@ -556,17 +574,16 @@ if data:
         with tab2:
             st.subheader("Details of Matched GRNs")
             matched_df = data['grn'][data['grn']['DocNum'].isin(list(matched_grns))]
-            st.dataframe(matched_df)
+            #st.dataframe(matched_df)
             csv_matched_grn = convert_df_to_csv(matched_df)
             st.download_button(label="Download Matched GRNs as CSV", data=csv_matched_grn, file_name="matched_grns.csv", mime="text/csv")
 
     # =================================================================================
-    # --- PAGE 4: Stock Aging (MODIFIED) ---
+    # --- PAGE 4: Stock Aging ---
     # =================================================================================
     elif page == "📈 Stock Aging":
         st.sidebar.header("Dashboard Filters")
         
-        # --- MODIFICATION START: Changed multiselect to selectbox ---
         filtered_df = stock_aging_data.copy()
 
         brand_options = ['All'] + sorted(list(stock_aging_data['Brand'].unique()))
@@ -588,7 +605,6 @@ if data:
         selected_prod_group = st.sidebar.selectbox("Select SKU", prod_group_options)
         if selected_prod_group != 'All':
             filtered_df = filtered_df[filtered_df['ProductGroup'] == selected_prod_group]
-        # --- MODIFICATION END ---
         
         st.title("📦 Interactive Stock Aging Dashboard")
         st.markdown("Use the filters on the left to analyze the inventory data.")
@@ -646,7 +662,6 @@ if data:
             )
             st.plotly_chart(fig_aging_combo, use_container_width=True)
 
-            # --- MODIFICATION START: "Brand Value by Age" section moved here ---
             st.markdown("---")
             st.header("Brand Value by Age")
             filtered_df['<30 Days Value'], filtered_df['>30 Days Value'] = filtered_df['0-15Value'] + filtered_df['16-30Value'], filtered_df['TotalValue'] - (filtered_df['0-15Value'] + filtered_df['16-30Value'])
@@ -681,15 +696,15 @@ if data:
                     st.plotly_chart(fig_gt30, use_container_width=True)
                 else:
                     st.info("No stock data available for > 30 Days.")
-            # --- MODIFICATION END ---
 
             st.header("Download Filtered Stock Data")
+            #st.dataframe(filtered_df)
             csv_aging_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Aging Data as CSV", data=csv_aging_data, file_name="stock_aging_data.csv", mime="text/csv")
 
 
     # =================================================================================
-    # --- PAGE 5: Dispatch & Delivery (MODIFIED) ---
+    # --- PAGE 5: Dispatch & Delivery ---
     # =================================================================================
     elif page == "🚚 Dispatch & Delivery":
         st.header("Billing and Logistics Performance")
@@ -718,10 +733,15 @@ if data:
             st.subheader("Billing Accuracy")
             matched_count, mismatched_count = filtered_df[filtered_df['Billing Status'] == 'Matched'].shape[0], filtered_df[filtered_df['Billing Status'] == 'Mismatched'].shape[0]
             total_orders_kpi = matched_count + mismatched_count
-            matched_percentage, mismatched_percentage = (f"{(matched_count / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A"), (f"{(mismatched_count / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A")
+            if total_orders_kpi > 0:
+                matched_percentage = f"{(matched_count / total_orders_kpi) * 100:.1f}%"
+                mismatched_percentage = f"{(mismatched_count / total_orders_kpi) * 100:.1f}%"
+            else:
+                matched_percentage, mismatched_percentage = "N/A", "N/A"
             kpi1, kpi2 = st.columns(2)
             kpi1.metric("✅ Correctly Billed Orders", f"{matched_count:,}", delta=matched_percentage)
-            kpi2.metric("❌ Cross Billed Orders", f"{mismatched_count:,}", delta=mismatched_percentage)
+            kpi2.metric("❌ Cross Billed Orders", f"{mismatched_count:,}", delta=mismatched_percentage, delta_color="inverse")
+            
             def categorize_days(days):
                 if pd.isna(days) or days < 0: return 'Invalid Data'
                 elif days <= 1: return '0-1 Day'
@@ -729,12 +749,22 @@ if data:
                 elif days == 3: return '3 Days'
                 elif days <= 5: return '4-5 Days'
                 else: return 'More than 5 Days'
-            filtered_df['Dispatch Category'], filtered_df['Delivery Category'] = filtered_df['Dispatch Days'].apply(categorize_days), filtered_df['Delivery Days'].apply(categorize_days)
+            
+            filtered_df['Dispatch Category'] = filtered_df['Dispatch Days'].apply(categorize_days)
+            filtered_df['Delivery Category'] = filtered_df['Delivery Days'].apply(categorize_days)
+            
             st.subheader("Dispatch & Delivery Timelines")
             dispatch_le3, dispatch_gt3 = filtered_df[filtered_df['Dispatch Days'] <= 3].shape[0], filtered_df[filtered_df['Dispatch Days'] > 3].shape[0]
             delivery_le3, delivery_gt3 = filtered_df[filtered_df['Delivery Days'] <= 3].shape[0], filtered_df[filtered_df['Delivery Days'] > 3].shape[0]
-            dispatch_le3_pct, dispatch_gt3_pct = (f"{(dispatch_le3 / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A"), (f"{(dispatch_gt3 / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A")
-            delivery_le3_pct, delivery_gt3_pct = (f"{(delivery_le3 / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A"), (f"{(delivery_gt3 / total_orders_kpi) * 100:.1f}%" if total_orders_kpi > 0 else "N/A")
+            
+            if total_orders_kpi > 0:
+                dispatch_le3_pct = f"{(dispatch_le3 / total_orders_kpi) * 100:.1f}%"
+                dispatch_gt3_pct = f"{(dispatch_gt3 / total_orders_kpi) * 100:.1f}%"
+                delivery_le3_pct = f"{(delivery_le3 / total_orders_kpi) * 100:.1f}%"
+                delivery_gt3_pct = f"{(delivery_gt3 / total_orders_kpi) * 100:.1f}%"
+            else:
+                dispatch_le3_pct, dispatch_gt3_pct, delivery_le3_pct, delivery_gt3_pct = "N/A", "N/A", "N/A", "N/A"
+
             kpi3, kpi4, kpi5, kpi6 = st.columns(4)
             kpi3.metric("🚚 Dispatched <= 3 Days", f"{dispatch_le3:,}", delta=dispatch_le3_pct)
             kpi4.metric("⏳ Dispatched > 3 Days", f"{dispatch_gt3:,}", delta=dispatch_gt3_pct, delta_color="inverse")
@@ -760,11 +790,17 @@ if data:
 
             st.divider()
             st.subheader("Depot Performance Matrix By Orders")
-            depot_summary = dispatch_delivery_df.groupby('WhsCode').agg(total_orders=('WhsCode', 'size'), matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())).reset_index()
-            depot_summary['match_rate_%'], depot_summary['mismatch_rate_%'] = (depot_summary['matched_orders'] / depot_summary['total_orders']) * 100, (depot_summary['mismatched_orders'] / depot_summary['total_orders']) * 100
+            depot_summary = dispatch_delivery_df.groupby('WhsCode').agg(
+                total_orders=('WhsCode', 'size'), 
+                matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), 
+                mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())
+            ).reset_index()
+            depot_summary['match_rate_%'] = (depot_summary['matched_orders'] / depot_summary['total_orders']) * 100
+            depot_summary['mismatch_rate_%'] = (depot_summary['mismatched_orders'] / depot_summary['total_orders']) * 100
             depot_summary = depot_summary.rename(columns={'WhsCode': 'Depot', 'total_orders': 'Total Orders', 'matched_orders': 'Matched', 'mismatched_orders': 'Cross Billed', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
             depot_summary = depot_summary.sort_values(by='Match Rate', ascending=False)
             st.dataframe(depot_summary.style.format({'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
+            
             st.subheader("Depot Performance Matrix By Cases")
             if 'Qty in Cases' in dispatch_delivery_df.columns and dispatch_delivery_df['Qty in Cases'].sum() > 0:
                 depot_summary_cases_raw = dispatch_delivery_df.groupby(['WhsCode', 'Billing Status'])['Qty in Cases'].sum().unstack(fill_value=0)
@@ -772,15 +808,16 @@ if data:
                 if 'Mismatched' not in depot_summary_cases_raw.columns: depot_summary_cases_raw['Mismatched'] = 0
                 depot_summary_cases = depot_summary_cases_raw.reset_index()
                 depot_summary_cases['total_cases'] = depot_summary_cases['Matched'] + depot_summary_cases['Mismatched']
-                depot_summary_cases['match_rate_%'], depot_summary_cases['mismatch_rate_%'] = (depot_summary_cases['Matched'] / depot_summary_cases['total_cases'] * 100).fillna(0), (depot_summary_cases['Mismatched'] / depot_summary_cases['total_cases'] * 100).fillna(0)
+                depot_summary_cases['match_rate_%'] = (depot_summary_cases['Matched'] / depot_summary_cases['total_cases'] * 100).fillna(0)
+                depot_summary_cases['mismatch_rate_%'] = (depot_summary_cases['Mismatched'] / depot_summary_cases['total_cases'] * 100).fillna(0)
                 depot_summary_cases = depot_summary_cases.rename(columns={'WhsCode': 'Depot', 'total_cases': 'Total Cases', 'Matched': 'Matched Cases', 'Mismatched': 'Cross Billed Cases', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
                 depot_summary_cases = depot_summary_cases.sort_values(by='Match Rate', ascending=False)
                 depot_summary_cases = depot_summary_cases[['Depot', 'Total Cases', 'Matched Cases', 'Cross Billed Cases', 'Match Rate', 'Cross Billed Rate']]
                 st.dataframe(depot_summary_cases.style.format({'Total Cases': '{:,.0f}', 'Matched Cases': '{:,.0f}', 'Cross Billed Cases': '{:,.0f}', 'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
-               
             else:
                 st.info("No case quantity data available for the case-based performance matrix.")
             
             st.subheader("Download Detailed Logistics Data")
+            #st.dataframe(filtered_df)
             csv_log_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Filtered Logistics Data as CSV", data=csv_log_data, file_name="dispatch_delivery_data.csv", mime="text/csv")
