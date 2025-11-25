@@ -73,7 +73,7 @@ def format_indian_number(num):
 
 
 # --- MODIFIED: Added underscore to the argument to fix the caching error ---
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=1200)
 def load_data_from_ftp(_ftp_paths): # <-- FIX IS HERE
     """Connects to an FTP server, downloads files into memory, and loads them into pandas DataFrames."""
     data_frames = {}
@@ -164,6 +164,7 @@ def create_grouped_bar_chart(df, title):
     return chart
 
 # --- Helper function for the combination chart ---
+# --- MODIFIED: Updated to display the primary Y-axis in Lakhs ---
 def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title):
     """Creates a Plotly combination chart with bars and a line on a secondary y-axis."""
     # Create figure with secondary y-axis
@@ -173,7 +174,7 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
     fig.add_trace(
         go.Bar(
             x=df[x_col],
-            y=df[bar_col],
+            y=df[bar_col] / 1_00_000,  # Convert value to Lakhs for the axis scale
             name='Stock Value',
             marker_color='mediumpurple',
             text=bar_text,
@@ -181,7 +182,7 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
             insidetextanchor='middle',
             textfont_color='white',
             textangle=0,
-            hovertemplate=f'<b>%{{x}}</b><br>Stock Value: ₹ %{{y:,.2f}}<extra></extra>'
+            hovertemplate=f'<b>%{{x}}</b><br>Stock Value: ₹ %{{y:.2f}} L<extra></extra>' # Updated hover template
         ),
         secondary_y=False,
     )
@@ -215,7 +216,7 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
     fig.update_xaxes(title_text=x_col)
 
     # Set y-axes titles
-    fig.update_yaxes(title_text="<b>Stock Value (₹)</b>", secondary_y=False)
+    fig.update_yaxes(title_text="<b>Stock Value (in ₹ Lakhs)</b>", secondary_y=False) # Updated Y-axis title
     fig.update_yaxes(title_text="<b>Qty in Cases</b>", secondary_y=True)
 
     return fig
@@ -249,18 +250,18 @@ if data:
         columns_to_merge.append('Item Description')
     else:
         st.warning("Warning: 'Item Description' column not found in skulist data. Using 'Item No.' as fallback for SKU-level views.")
-    
+
     # Corrected merge operation
     stock_enriched = pd.merge(
-        data['stockav'], 
+        data['stockav'],
         data['skulist'][columns_to_merge],
-        left_on='ItemCode', 
+        left_on='ItemCode',
         right_on='Item No.',
         how='left'
     )
-    
+
     stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='WhsCode', right_on='WH Code', how='left')
-    
+
     # =================================================================================
     # --- START OF INDENTATION FIX ---
     # This entire block was indented incorrectly in your script.
@@ -269,14 +270,14 @@ if data:
     tn_depots = ["CHN_N", "ERD", "TRI", "TUTICOR"]
     Damage_goods =["DBAN","DBHIWA","DCHN_N","DCUT","DEcom","DERD","DHYD_New","DIND","DKOL","DNAG","DTRI","DTUTICOR"]
     transit=['TCHN','TCHN_N','TEcom','THYD_New','TIND','TTRI','TTUTICOR','TTUTMFD']
-    
+
     # Define the conditions and the corresponding choices for np.select
     conditions = [
         stock_enriched['WhsCode'].isin(tn_depots),
         stock_enriched['WhsCode'].isin(Damage_goods),
         stock_enriched['WhsCode'].isin(transit)
     ]
-    
+
     choices = [
         'TN',
         'Damage_goods',
@@ -296,7 +297,7 @@ if data:
                 stock_enriched[col].astype(str).str.replace(r'[^\d.]', '', regex=True),
                 errors='coerce'
             ).fillna(0)
-    
+
     categorical_cols_stock = ['RSM/ DSM', 'Classification', 'Prod Cat', 'Remark', 'WhsCode', 'Vendor']
     if 'ItemName' in stock_enriched.columns:
         categorical_cols_stock.append('ItemName')
@@ -464,7 +465,7 @@ if data:
                 st.download_button(label="Download Full Data as CSV", data=csv_data, file_name="stock_analysis_full_data.csv", mime="text/csv")
             else:
                 sku_col = 'Item Description' if 'Item Description' in filtered_stock_df.columns else 'ItemCode'
-                
+
                 summary_cols_map = {
                     "By Depot": ['WhsCode', 'RSM/ DSM'],
                     "By Product Category": ['Prod Cat', 'Classification','WhsCode' ,sku_col],
@@ -583,7 +584,7 @@ if data:
     # =================================================================================
     elif page == "📈 Stock Aging":
         st.sidebar.header("Dashboard Filters")
-        
+
         filtered_df = stock_aging_data.copy()
 
         brand_options = ['All'] + sorted(list(stock_aging_data['Brand'].unique()))
@@ -605,7 +606,7 @@ if data:
         selected_prod_group = st.sidebar.selectbox("Select SKU", prod_group_options)
         if selected_prod_group != 'All':
             filtered_df = filtered_df[filtered_df['ProductGroup'] == selected_prod_group]
-        
+
         st.title("📦 Interactive Stock Aging Dashboard")
         st.markdown("Use the filters on the left to analyze the inventory data.")
 
@@ -623,7 +624,7 @@ if data:
             greater_than_30_value = total_value - less_than_30_value
             less_than_30_cases = filtered_df[['0-15Qty', '16-30Qty']].sum().sum()
             greater_than_30_cases = total_qty - less_than_30_cases
-            
+
             kpi_col1, kpi_col2 = st.columns(2)
             kpi_col1.metric("Stock Value < 30 Days", format_indian_currency_kpi(less_than_30_value))
             kpi_col2.metric("Stock Value > 30 Days", format_indian_currency_kpi(greater_than_30_value))
@@ -634,13 +635,13 @@ if data:
 
             st.markdown("---")
             st.header("Inventory Age Distribution")
-            
+
             aging_data = {
                 'Aging Bucket': ['0-15 Days', '16-30 Days', '31-60 Days', '61-90 Days', '91-180 Days', '181-360 Days', '361-720 Days', '721+ Days'],
                 'Value': [
-                    filtered_df['0-15Value'].sum(), filtered_df['16-30Value'].sum(), 
-                    filtered_df['31-60Value'].sum(), filtered_df['61-90Value'].sum(), 
-                    filtered_df['91-180Value'].sum(), filtered_df['181-360Value'].sum(), 
+                    filtered_df['0-15Value'].sum(), filtered_df['16-30Value'].sum(),
+                    filtered_df['31-60Value'].sum(), filtered_df['61-90Value'].sum(),
+                    filtered_df['91-180Value'].sum(), filtered_df['181-360Value'].sum(),
                     filtered_df['361-720Value'].sum(), filtered_df['721+DaysValue'].sum()
                 ],
                 'Quantity': [
@@ -651,10 +652,10 @@ if data:
                 ]
             }
             aging_df = pd.DataFrame(aging_data)
-            
+
             aging_df['value_label'] = (aging_df['Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
             aging_df['qty_label'] = aging_df['Quantity'].apply(format_indian_number)
-            
+
             fig_aging_combo = create_combo_chart(
                 df=aging_df, x_col='Aging Bucket', bar_col='Value', line_col='Quantity',
                 bar_text=aging_df['value_label'], line_text=aging_df['qty_label'],
@@ -666,7 +667,7 @@ if data:
             st.header("Brand Value by Age")
             filtered_df['<30 Days Value'], filtered_df['>30 Days Value'] = filtered_df['0-15Value'] + filtered_df['16-30Value'], filtered_df['TotalValue'] - (filtered_df['0-15Value'] + filtered_df['16-30Value'])
             lt30_by_brand, gt30_by_brand = filtered_df[filtered_df['<30 Days Value'] > 0].groupby('Brand')['<30 Days Value'].sum().reset_index(), filtered_df[filtered_df['>30 Days Value'] > 0].groupby('Brand')['>30 Days Value'].sum().reset_index()
-            
+
             col1_brand, col2_brand = st.columns(2)
             with col1_brand:
                 if not lt30_by_brand.empty:
@@ -741,7 +742,7 @@ if data:
             kpi1, kpi2 = st.columns(2)
             kpi1.metric("✅ Correctly Billed Orders", f"{matched_count:,}", delta=matched_percentage)
             kpi2.metric("❌ Cross Billed Orders", f"{mismatched_count:,}", delta=mismatched_percentage, delta_color="inverse")
-            
+
             def categorize_days(days):
                 if pd.isna(days) or days < 0: return 'Invalid Data'
                 elif days <= 1: return '0-1 Day'
@@ -749,14 +750,14 @@ if data:
                 elif days == 3: return '3 Days'
                 elif days <= 5: return '4-5 Days'
                 else: return 'More than 5 Days'
-            
+
             filtered_df['Dispatch Category'] = filtered_df['Dispatch Days'].apply(categorize_days)
             filtered_df['Delivery Category'] = filtered_df['Delivery Days'].apply(categorize_days)
-            
+
             st.subheader("Dispatch & Delivery Timelines")
             dispatch_le3, dispatch_gt3 = filtered_df[filtered_df['Dispatch Days'] <= 3].shape[0], filtered_df[filtered_df['Dispatch Days'] > 3].shape[0]
             delivery_le3, delivery_gt3 = filtered_df[filtered_df['Delivery Days'] <= 3].shape[0], filtered_df[filtered_df['Delivery Days'] > 3].shape[0]
-            
+
             if total_orders_kpi > 0:
                 dispatch_le3_pct = f"{(dispatch_le3 / total_orders_kpi) * 100:.1f}%"
                 dispatch_gt3_pct = f"{(dispatch_gt3 / total_orders_kpi) * 100:.1f}%"
@@ -791,8 +792,8 @@ if data:
             st.divider()
             st.subheader("Depot Performance Matrix By Orders")
             depot_summary = dispatch_delivery_df.groupby('WhsCode').agg(
-                total_orders=('WhsCode', 'size'), 
-                matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()), 
+                total_orders=('WhsCode', 'size'),
+                matched_orders=('Billing Status', lambda x: (x == 'Matched').sum()),
                 mismatched_orders=('Billing Status', lambda x: (x == 'Mismatched').sum())
             ).reset_index()
             depot_summary['match_rate_%'] = (depot_summary['matched_orders'] / depot_summary['total_orders']) * 100
@@ -800,7 +801,7 @@ if data:
             depot_summary = depot_summary.rename(columns={'WhsCode': 'Depot', 'total_orders': 'Total Orders', 'matched_orders': 'Matched', 'mismatched_orders': 'Cross Billed', 'match_rate_%': 'Match Rate', 'mismatch_rate_%': 'Cross Billed Rate'})
             depot_summary = depot_summary.sort_values(by='Match Rate', ascending=False)
             st.dataframe(depot_summary.style.format({'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
-            
+
             st.subheader("Depot Performance Matrix By Cases")
             if 'Qty in Cases' in dispatch_delivery_df.columns and dispatch_delivery_df['Qty in Cases'].sum() > 0:
                 depot_summary_cases_raw = dispatch_delivery_df.groupby(['WhsCode', 'Billing Status'])['Qty in Cases'].sum().unstack(fill_value=0)
@@ -816,7 +817,7 @@ if data:
                 st.dataframe(depot_summary_cases.style.format({'Total Cases': '{:,.0f}', 'Matched Cases': '{:,.0f}', 'Cross Billed Cases': '{:,.0f}', 'Match Rate': '{:.2f}%', 'Cross Billed Rate': '{:.2f}%'}), use_container_width=True, hide_index=True)
             else:
                 st.info("No case quantity data available for the case-based performance matrix.")
-            
+
             st.subheader("Download Detailed Logistics Data")
             #st.dataframe(filtered_df)
             csv_log_data = convert_df_to_csv(filtered_df)
