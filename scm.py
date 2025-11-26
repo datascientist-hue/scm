@@ -400,28 +400,28 @@ if data and file_timestamps:
         
         state_group_options = sorted(stock_enriched['State_Group'].unique().tolist())
         selected_state_group = st.sidebar.multiselect("Filter by Region:", options=state_group_options, default=[])
-        dsm_options = ["All"] + sorted(stock_enriched['RSM/ DSM'].unique().tolist())
-        selected_dsm = st.sidebar.selectbox("Filter by DSM/RSM:", options=dsm_options)
-        class_options = ["All"] + sorted(stock_enriched['Classification'].unique().tolist())
-        selected_class = st.sidebar.selectbox("Filter by Classification:", options=class_options)
+        dsm_options = sorted(stock_enriched['RSM/ DSM'].unique().tolist())
+        selected_dsm = st.sidebar.multiselect("Filter by DSM/RSM:", options=dsm_options,default=[])
+        class_options = sorted(stock_enriched['Classification'].unique().tolist())
+        selected_class = st.sidebar.multiselect("Filter by Classification:", options=class_options,default=[])
         if 'Prod Cat' in stock_enriched.columns:
-            prod_cat_options = ["All"] + sorted(stock_enriched['Prod Cat'].unique().tolist())
-            selected_prod_cat = st.sidebar.selectbox('Filter by Product Category:', options=prod_cat_options)
-        remark_options = ["All"] + sorted(stock_enriched['Remark'].unique().tolist())
-        selected_remark = st.sidebar.selectbox("Filter by TPU/TMD:", options=remark_options)
+            prod_cat_options =sorted(stock_enriched['Prod Cat'].unique().tolist())
+            selected_prod_cat = st.sidebar.multiselect('Filter by Product Category:', options=prod_cat_options,default=[])
+        remark_options = sorted(stock_enriched['Remark'].unique().tolist())
+        selected_remark = st.sidebar. multiselect("Filter by TPU/TMD:", options=remark_options,default=[])
         
         st.header("Stock Analysis")
         filtered_stock_df = stock_enriched.copy()
         if selected_state_group:
            filtered_stock_df = filtered_stock_df[filtered_stock_df['State_Group'].isin(selected_state_group)]
-        if selected_dsm != "All":
-            filtered_stock_df = filtered_stock_df[filtered_stock_df['RSM/ DSM'] == selected_dsm]
-        if selected_class != "All":
-            filtered_stock_df = filtered_stock_df[filtered_stock_df['Classification'] == selected_class]
-        if 'Prod Cat' in filtered_stock_df.columns and 'selected_prod_cat' in locals() and selected_prod_cat != "All":
-            filtered_stock_df = filtered_stock_df[filtered_stock_df['Prod Cat'] == selected_prod_cat]
-        if selected_remark != "All":
-            filtered_stock_df = filtered_stock_df[filtered_stock_df['Remark'] == selected_remark]
+        if selected_dsm :
+            filtered_stock_df = filtered_stock_df[filtered_stock_df['RSM/ DSM'].isin (selected_dsm)]
+        if selected_class :
+            filtered_stock_df = filtered_stock_df[filtered_stock_df['Classification'].isin (selected_class)]
+        if 'Prod Cat' in filtered_stock_df.columns and 'selected_prod_cat' in locals() and selected_prod_cat:
+            filtered_stock_df = filtered_stock_df[filtered_stock_df['Prod Cat'].isin (selected_prod_cat)]
+        if selected_remark :
+            filtered_stock_df = filtered_stock_df[filtered_stock_df['Remark'].isin (selected_remark)]
         
         st.subheader("Key Stock Metrics")
         total_stock_value = filtered_stock_df['Stock Value'].sum()
