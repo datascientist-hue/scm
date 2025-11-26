@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import altair as alt
-from datetime import datetime, timezone, timedelta # MODIFIED: Imported timezone and timedelta
+from datetime import datetime, timezone, timedelta
 import ftplib
 import io
 
@@ -72,8 +72,7 @@ def format_indian_number(num):
     return f"{formatted_other_digits},{last_three}"
 
 
-# --- MODIFIED: Updated to handle timezones correctly ---
-@st.cache_data(ttl=300) # Adjusted cache to 5 minutes to match FTP push frequency
+@st.cache_data(ttl=300)
 def load_data_from_ftp(_ftp_paths):
     """
     Connects to an FTP server, downloads files, gets their last modified times,
@@ -81,50 +80,33 @@ def load_data_from_ftp(_ftp_paths):
     Returns a tuple of (data_frames, file_timestamps).
     """
     data_frames = {}
-    file_timestamps = {}  # To store the last modified time for each file
+    file_timestamps = {}
     ftp_host = st.secrets["ftp"]["host"]
     ftp_user = st.secrets["ftp"]["user"]
     ftp_pass = st.secrets["ftp"]["password"]
 
     try:
-        # Establish FTP connection
         with ftplib.FTP(ftp_host, ftp_user, ftp_pass) as ftp:
             st.info("🔌 Successfully connected to FTP server...")
 
             for name, path_on_ftp in _ftp_paths.items():
-                # --- MODIFICATION START: Correct timezone handling ---
                 try:
-                    # The response format for MDTM is "213 YYYYMMDDHHMMSS"
                     mdtm_response = ftp.sendcmd(f'MDTM {path_on_ftp}')
                     timestamp_str = mdtm_response.split(' ')[1].strip()
-
-                    # 1. Parse the string into a naive datetime object
                     naive_dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
-
-                    # 2. Make it timezone-aware by setting its timezone to UTC
                     utc_dt = naive_dt.replace(tzinfo=timezone.utc)
-
-                    # 3. Define the Indian Standard Time (IST) timezone (UTC+5:30)
                     ist_tz = timezone(timedelta(hours=5, minutes=30))
-
-                    # 4. Convert the UTC datetime to the IST timezone
                     mod_time_ist = utc_dt.astimezone(ist_tz)
-
                     file_timestamps[name] = mod_time_ist
 
                 except Exception as e:
                     file_timestamps[name] = None
                     st.warning(f"Could not retrieve last modified time for '{name}': {e}")
-                # --- MODIFICATION END ---
 
-                # Use BytesIO to create an in-memory binary file
                 in_memory_file = io.BytesIO()
-                # Download the file from FTP and write it to the in-memory object
                 ftp.retrbinary(f'RETR {path_on_ftp}', in_memory_file.write)
-                # "Rewind" the in-memory file to the beginning
                 in_memory_file.seek(0)
 
-                # Read the in-memory file into a pandas DataFrame
                 df = pd.read_parquet(in_memory_file)
                 df.columns = df.columns.str.strip()
                 data_frames[name] = df
@@ -140,7 +122,6 @@ def load_data_from_ftp(_ftp_paths):
         return None, None
 
 
-# --- NEW: Helper function to display the last refreshed time ---
 def display_last_refreshed(file_keys, timestamps_dict):
     """
     Finds the latest timestamp from a list of files and displays it in the sidebar.
@@ -155,10 +136,8 @@ def display_last_refreshed(file_keys, timestamps_dict):
     st.sidebar.markdown(f"Last refreshed: **{formatted_timestamp}**")
 
 
-# --- UPDATED: Helper function for clustered bar charts with data labels ---
 def create_grouped_bar_chart(df, title):
     """Creates a grouped (clustered) Altair bar chart for dispatch and delivery timelines WITH data labels."""
-    # 1. Calculate counts for each category
     dispatch_data = df['Dispatch Category'].value_counts().reset_index()
     dispatch_data.columns = ['Category', 'count']
     dispatch_data['Timeline'] = 'Dispatch'
@@ -167,20 +146,18 @@ def create_grouped_bar_chart(df, title):
     delivery_data.columns = ['Category', 'count']
     delivery_data['Timeline'] = 'Delivery'
 
-    # 2. Combine the data for plotting
     combined_data = pd.concat([dispatch_data, delivery_data])
 
     category_order = ['0-1 Day', '2 Days', '3 Days', '4-5 Days', 'More than 5 Days', 'Invalid Data']
 
-    # 3. Create the base bar chart layer
     bars = alt.Chart(combined_data).mark_bar().encode(
         x=alt.X('Category:N', axis=alt.Axis(title=None, labelAngle=0), sort=category_order),
         y=alt.Y('count:Q', axis=alt.Axis(title='Number of Orders')),
         color=alt.Color('Timeline:N',
                         scale=alt.Scale(domain=['Dispatch', 'Delivery'],
-                                        range=['#1f77b4', '#ff7f0e']), # Blue and Orange
+                                        range=['#1f77b4', '#ff7f0e']),
                         legend=alt.Legend(title="Timeline")),
-        xOffset='Timeline:N', # This is what creates the grouping effect
+        xOffset='Timeline:N',
         tooltip=[
             alt.Tooltip('Category', title='Category'),
             alt.Tooltip('Timeline', title='Timeline'),
@@ -188,16 +165,14 @@ def create_grouped_bar_chart(df, title):
         ]
     )
 
-    # 4. Create the text labels layer
     text = bars.mark_text(
         align='center',
         baseline='middle',
-        dy=-10  # Nudge text slightly above the bar
+        dy=-10
     ).encode(
-        text='count:Q' # Use the 'count' column for the text label
+        text='count:Q'
     )
 
-    # 5. Combine the bar layer and the text layer, then apply final configurations
     chart = (bars + text).properties(
         title=title
     ).configure_view(
@@ -209,18 +184,14 @@ def create_grouped_bar_chart(df, title):
     )
     return chart
 
-# --- Helper function for the combination chart ---
-# --- MODIFIED: Updated to display the primary Y-axis in Lakhs ---
 def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title):
     """Creates a Plotly combination chart with bars and a line on a secondary y-axis."""
-    # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Add bar trace for Stock Value
     fig.add_trace(
         go.Bar(
             x=df[x_col],
-            y=df[bar_col] / 1_00_000,  # Convert value to Lakhs for the axis scale
+            y=df[bar_col] / 1_00_000,
             name='Stock Value',
             marker_color='mediumpurple',
             text=bar_text,
@@ -228,12 +199,11 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
             insidetextanchor='middle',
             textfont_color='white',
             textangle=0,
-            hovertemplate=f'<b>%{{x}}</b><br>Stock Value: ₹ %{{y:.2f}} L<extra></extra>' # Updated hover template
+            hovertemplate=f'<b>%{{x}}</b><br>Stock Value: ₹ %{{y:.2f}} L<extra></extra>'
         ),
         secondary_y=False,
     )
 
-    # Add line trace for Quantity in Cases
     fig.add_trace(
         go.Scatter(
             x=df[x_col],
@@ -248,7 +218,6 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
         secondary_y=True,
     )
 
-    # Add figure title, configure legend, and remove grid lines
     fig.update_layout(
         title_text=title,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -258,11 +227,8 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
         plot_bgcolor='rgba(0,0,0,0)'
     )
 
-    # Set x-axis title
     fig.update_xaxes(title_text=x_col)
-
-    # Set y-axes titles
-    fig.update_yaxes(title_text="<b>Stock Value (in ₹ Lakhs)</b>", secondary_y=False) # Updated Y-axis title
+    fig.update_yaxes(title_text="<b>Stock Value (in ₹ Lakhs)</b>", secondary_y=False)
     fig.update_yaxes(title_text="<b>Qty in Cases</b>", tickformat=",")
 
     return fig
@@ -279,13 +245,10 @@ def convert_df_to_csv(df):
 
 st.title("Supply Chain & Finance Analytics Dashboard")
 
-# --- MODIFIED: Unpack both data and timestamps ---
 ftp_file_paths = st.secrets["ftp"]["paths"]
 data, file_timestamps = load_data_from_ftp(ftp_file_paths)
 
 
-# --- Main Application Logic ---
-# --- MODIFIED: Check if both data and timestamps are loaded ---
 if data and file_timestamps:
     # =================================================================================
     # --- DATA PREPARATION (Done once upfront for all pages) ---
@@ -298,7 +261,6 @@ if data and file_timestamps:
     else:
         st.warning("Warning: 'Item Description' column not found in skulist data. Using 'Item No.' as fallback for SKU-level views.")
 
-    # Corrected merge operation
     stock_enriched = pd.merge(
         data['stockav'],
         data['skulist'][columns_to_merge],
@@ -306,7 +268,6 @@ if data and file_timestamps:
         right_on='Item No.',
         how='left'
     )
-
     stock_enriched = pd.merge(stock_enriched, data['dsmmaster'], left_on='WhsCode', right_on='WH Code', how='left')
 
     tn_depots = ["CHN_N", "ERD", "TRI", "TUTICOR"]
@@ -396,7 +357,6 @@ if data and file_timestamps:
         st.warning("Warning: 'Qty in Cases' column not found in Dispatch & Delivery data. Case-based metrics will be zero.")
 
     db_master_df = db_master_df.loc[:, ~db_master_df.columns.duplicated()]
-
     db_master_df = pd.merge(db_master_df, depot_mapping_df, left_on='U_Depot', right_on='Depot to Bill', how='left')
     db_master_df['Final Depot to Bill'] = db_master_df['Updated_depot_to_bill'].fillna(db_master_df['U_Depot'])
 
@@ -413,7 +373,6 @@ if data and file_timestamps:
         dispatch_delivery_df[col] = pd.to_datetime(dispatch_delivery_df[col], errors='coerce', dayfirst=True)
 
     current_date = pd.Timestamp('today').normalize()
-
     end_date_for_dispatch = dispatch_delivery_df['LR/Dispatch Date'].fillna(current_date)
     dispatch_delivery_df['Dispatch Days'] = (end_date_for_dispatch - dispatch_delivery_df['DocDate']).dt.days
 
@@ -436,7 +395,6 @@ if data and file_timestamps:
     # --- PAGE 1: Stock Analysis ---
     # =================================================================================
     if page == "📦 Stock Analysis":
-        # --- ADDITION: Display last refreshed date ---
         display_last_refreshed(['stockav', 'skulist', 'dsmmaster'], file_timestamps)
         st.sidebar.header("Stock Analysis Filters")
         
@@ -451,10 +409,11 @@ if data and file_timestamps:
             selected_prod_cat = st.sidebar.selectbox('Filter by Product Category:', options=prod_cat_options)
         remark_options = ["All"] + sorted(stock_enriched['Remark'].unique().tolist())
         selected_remark = st.sidebar.selectbox("Filter by TPU/TMD:", options=remark_options)
+        
         st.header("Stock Analysis")
         filtered_stock_df = stock_enriched.copy()
         if selected_state_group:
-           filtered_stock_df = filtered_stock_df[filtered_stock_df['State_Group'].isin (selected_state_group)]
+           filtered_stock_df = filtered_stock_df[filtered_stock_df['State_Group'].isin(selected_state_group)]
         if selected_dsm != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['RSM/ DSM'] == selected_dsm]
         if selected_class != "All":
@@ -463,12 +422,14 @@ if data and file_timestamps:
             filtered_stock_df = filtered_stock_df[filtered_stock_df['Prod Cat'] == selected_prod_cat]
         if selected_remark != "All":
             filtered_stock_df = filtered_stock_df[filtered_stock_df['Remark'] == selected_remark]
+        
         st.subheader("Key Stock Metrics")
         total_stock_value = filtered_stock_df['Stock Value'].sum()
         total_qty_cases = filtered_stock_df['Qty in Cases'].sum()
         metric_col1, metric_col2 = st.columns(2)
         metric_col1.metric("Total Stock Value", format_indian_currency_kpi(total_stock_value))
         metric_col2.metric("Total Quantity in Cases", f"{total_qty_cases:,.0f}")
+        
         st.subheader("Visual Analysis")
         view_selection = st.radio("Select View:", ("By Depot", "By Product Category", "By Vendor", "By DSM", "All Data"), horizontal=True)
 
@@ -494,12 +455,10 @@ if data and file_timestamps:
 
             st.subheader(f"Data View: {view_selection}")
             if view_selection == "All Data":
-                #st.dataframe(filtered_stock_df)
                 csv_data = convert_df_to_csv(filtered_stock_df)
                 st.download_button(label="Download Full Data as CSV", data=csv_data, file_name="stock_analysis_full_data.csv", mime="text/csv")
             else:
                 sku_col = 'Item Description' if 'Item Description' in filtered_stock_df.columns else 'ItemCode'
-
                 summary_cols_map = {
                     "By Depot": ['WhsCode', 'RSM/ DSM'],
                     "By Product Category": ['Prod Cat', 'Classification','WhsCode' ,sku_col],
@@ -529,7 +488,6 @@ if data and file_timestamps:
     # --- PAGE 2: Open Purchase Orders ---
     # =================================================================================
     elif page == "🚚 Open Purchase Orders":
-        # --- ADDITION: Display last refreshed date ---
         display_last_refreshed(['openpo'], file_timestamps)
         st.sidebar.header("Open PO Filters")
         
@@ -541,12 +499,14 @@ if data and file_timestamps:
         else:
             from_date, to_date = None, None
             st.sidebar.info("Posting Date column not available for filtering.")
+        
         st.sidebar.divider()
         st.sidebar.subheader("Other Filters")
         vendor_options = ["All"] + sorted(open_po_data['CardName'].unique().tolist())
         selected_vendor = st.sidebar.selectbox("Select a Vendor:", options=vendor_options)
         sku_options = ["All"] + sorted(open_po_data['Dscription'].unique().tolist())
         select_sku = st.sidebar.selectbox("Select a SKU:", options=sku_options)
+        
         st.header("Pending Deliveries by Vendor (Open POs)")
         filtered_po_data = open_po_data.copy()
         if from_date and to_date:
@@ -556,12 +516,14 @@ if data and file_timestamps:
             filtered_po_data = filtered_po_data[filtered_po_data['CardName'] == selected_vendor]
         if select_sku != "All":
             filtered_po_data = filtered_po_data[filtered_po_data['Dscription'] == select_sku]
+        
         st.subheader("Key Open PO Metrics")
         total_open_value = filtered_po_data['Open Order Value'].sum()
         total_open_qty = filtered_po_data['Qty in Cases'].sum()
         col1_po, col2_po = st.columns(2)
         col1_po.metric("Total Open Order Value", format_indian_currency_kpi(total_open_value))
         col2_po.metric("Total Open Quantity in Cases", f"{total_open_qty:,.0f}")
+        
         st.subheader("Open Order Value by Vendor Name")
         if not filtered_po_data.empty:
             vendor_summary = filtered_po_data.groupby('CardName')['Open Order Value'].sum().reset_index()
@@ -570,6 +532,7 @@ if data and file_timestamps:
             fig_po = px.bar(vendor_summary, x='CardName', y='Value (L)', title='Total Open Order Value by Vendor', text='text_label', labels={'Value (L)': 'Total Value (in Lakhs)', 'CardName': 'Vendor'},color_discrete_sequence=['#9673FF'])
             fig_po.update_traces(textposition="outside")
             st.plotly_chart(fig_po, use_container_width=True)
+            
             st.subheader("Open PO Aging Summary")
             if 'Open PO Aging (Days)' in filtered_po_data.columns and not filtered_po_data.empty:
                 bins, labels = [-1, 10, 20, 30, 40, float('inf')], ['0-10 Days', '11-20 Days', '21-30 Days', '31-40 Days', '41+ Days']
@@ -582,8 +545,7 @@ if data and file_timestamps:
                     st.download_button(label="Download Aging Summary as CSV", data=csv_aging_summary, file_name="open_po_aging_summary.csv", mime="text/csv")
                 else:
                     st.info("No aging data to display for the current selection.")
-            #st.subheader("Download Filtered Open PO Details")
-            #st.dataframe(filtered_po_data)
+
             csv_po_data = convert_df_to_csv(filtered_po_data)
             st.download_button(label="Download PO Details as CSV", data=csv_po_data, file_name="open_po_details.csv", mime="text/csv")
         else:
@@ -593,18 +555,19 @@ if data and file_timestamps:
     # --- PAGE 3: GRN vs. AP Reconciliation ---
     # =================================================================================
     elif page == "🧾 GRN vs. AP Reconciliation":
-        # --- ADDITION: Display last refreshed date ---
         display_last_refreshed(['grn', 'apbooking'], file_timestamps)
         st.sidebar.info("This page does not have any filters.")
         
         st.header("GRN vs. Accounts Payable Reconciliation")
         grn_docs, ap_grns = data['grn']['DocNum'].dropna().unique(), data['apbooking']['GRN No.'].dropna().unique()
         matched_grns, unmatched_grns = set(grn_docs).intersection(set(ap_grns)), set(grn_docs).difference(set(ap_grns))
+        
         st.subheader("Reconciliation Summary")
         col1_grn, col2_grn, col3_grn = st.columns(3)
         col1_grn.metric("Total GRNs", len(grn_docs))
         col2_grn.metric("GRNs with AP Booking (Matched)", len(matched_grns))
         col3_grn.metric("GRNs without AP Booking (Unmatched)", len(unmatched_grns), delta_color="inverse")
+        
         tab1, tab2 = st.tabs(["Unmatched GRNs (Pending AP Booking)", "Matched GRNs"])
         with tab1:
             st.subheader("Details of Unmatched GRNs")
@@ -615,7 +578,6 @@ if data and file_timestamps:
         with tab2:
             st.subheader("Details of Matched GRNs")
             matched_df = data['grn'][data['grn']['DocNum'].isin(list(matched_grns))]
-            #st.dataframe(matched_df)
             csv_matched_grn = convert_df_to_csv(matched_df)
             st.download_button(label="Download Matched GRNs as CSV", data=csv_matched_grn, file_name="matched_grns.csv", mime="text/csv")
 
@@ -623,10 +585,8 @@ if data and file_timestamps:
     # --- PAGE 4: Stock Aging ---
     # =================================================================================
     elif page == "📈 Stock Aging":
-        # --- ADDITION: Display last refreshed date ---
         display_last_refreshed(['stockaging'], file_timestamps)
         st.sidebar.header("Dashboard Filters")
-
         filtered_df = stock_aging_data.copy()
 
         brand_options = ['All'] + sorted(list(stock_aging_data['Brand'].unique()))
@@ -655,12 +615,16 @@ if data and file_timestamps:
         if filtered_df.empty:
             st.warning("No data available for the selected filters.")
         else:
-            total_value, total_qty, aged_value = filtered_df["TotalValue"].sum(), filtered_df["TotalQty"].sum(), filtered_df[["181-360Value", "361-720Value", "721+DaysValue"]].sum().sum()
+            total_value = filtered_df["TotalValue"].sum()
+            total_qty = filtered_df["TotalQty"].sum()
+            aged_value = filtered_df[["181-360Value", "361-720Value", "721+DaysValue"]].sum().sum()
+            
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Inventory Value", format_indian_currency_kpi(total_value))
             col2.metric("Total Items in Stock", f"{total_qty:,.0f}")
             col3.metric("Value of Aged Stock (>180d)", format_indian_currency_kpi(aged_value))
             st.markdown("---")
+            
             st.subheader("Stock by Age Category")
             less_than_30_value = filtered_df[['0-15Value', '16-30Value']].sum().sum()
             greater_than_30_value = total_value - less_than_30_value
@@ -674,10 +638,9 @@ if data and file_timestamps:
             kpi_col3, kpi_col4 = st.columns(2)
             kpi_col3.metric("Stock Cases < 30 Days", format_indian_number(less_than_30_cases))
             kpi_col4.metric("Stock Cases > 30 Days", format_indian_number(greater_than_30_cases))
-
             st.markdown("---")
+            
             st.header("Inventory Age Distribution")
-
             aging_data = {
                 'Aging Bucket': ['0-15 Days', '16-30 Days', '31-60 Days', '61-90 Days', '91-180 Days', '181-360 Days', '361-720 Days', '721+ Days'],
                 'Value': [
@@ -694,7 +657,6 @@ if data and file_timestamps:
                 ]
             }
             aging_df = pd.DataFrame(aging_data)
-
             aging_df['value_label'] = (aging_df['Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
             aging_df['qty_label'] = aging_df['Quantity'].apply(format_indian_number)
 
@@ -704,20 +666,23 @@ if data and file_timestamps:
                 title="Inventory Age Distribution: Value (Bars) and Quantity (Line)"
             )
             st.plotly_chart(fig_aging_combo, use_container_width=True)
-
             st.markdown("---")
+            
             st.header("Brand Value by Age")
-            filtered_df['<30 Days Value'], filtered_df['>30 Days Value'] = filtered_df['0-15Value'] + filtered_df['16-30Value'], filtered_df['TotalValue'] - (filtered_df['0-15Value'] + filtered_df['16-30Value'])
-            lt30_by_brand, gt30_by_brand = filtered_df[filtered_df['<30 Days Value'] > 0].groupby('Brand')['<30 Days Value'].sum().reset_index(), filtered_df[filtered_df['>30 Days Value'] > 0].groupby('Brand')['>30 Days Value'].sum().reset_index()
+            filtered_df['<30 Days Value'] = filtered_df['0-15Value'] + filtered_df['16-30Value']
+            filtered_df['>30 Days Value'] = filtered_df['TotalValue'] - (filtered_df['0-15Value'] + filtered_df['16-30Value'])
+            
+            lt30_by_brand = filtered_df[filtered_df['<30 Days Value'] > 0].groupby('Brand')['<30 Days Value'].sum().reset_index()
+            gt30_by_brand = filtered_df[filtered_df['>30 Days Value'] > 0].groupby('Brand')['>30 Days Value'].sum().reset_index()
 
             col1_brand, col2_brand = st.columns(2)
             with col1_brand:
                 if not lt30_by_brand.empty:
-                    lt30_by_brand = lt30_by_brand.sort_values('<30 Days Value', ascending=False)
-                    lt30_by_brand['Value (L)'] = lt30_by_brand['<30 Days Value'] / 1_00_000
-                    lt30_by_brand['text_label'] = lt30_by_brand['Value (L)'].apply(lambda x: f'{x:.2f}L')
+                    lt30_by_brand_chart = lt30_by_brand.sort_values('<30 Days Value', ascending=False)
+                    lt30_by_brand_chart['Value (L)'] = lt30_by_brand_chart['<30 Days Value'] / 1_00_000
+                    lt30_by_brand_chart['text_label'] = lt30_by_brand_chart['Value (L)'].apply(lambda x: f'{x:.2f}L')
                     fig_lt30 = px.bar(
-                        lt30_by_brand, x='Brand', y='Value (L)',
+                        lt30_by_brand_chart, x='Brand', y='Value (L)',
                         title='Stock Value (< 30 Days) by Brand', text='text_label',
                         labels={'Value (L)': 'Value (in Lakhs)'}
                     )
@@ -727,11 +692,11 @@ if data and file_timestamps:
                     st.info("No stock data available for < 30 Days.")
             with col2_brand:
                 if not gt30_by_brand.empty:
-                    gt30_by_brand = gt30_by_brand.sort_values('>30 Days Value', ascending=False)
-                    gt30_by_brand['Value (L)'] = gt30_by_brand['>30 Days Value'] / 1_00_000
-                    gt30_by_brand['text_label'] = gt30_by_brand['Value (L)'].apply(lambda x: f'{x:.2f}L')
+                    gt30_by_brand_chart = gt30_by_brand.sort_values('>30 Days Value', ascending=False)
+                    gt30_by_brand_chart['Value (L)'] = gt30_by_brand_chart['>30 Days Value'] / 1_00_000
+                    gt30_by_brand_chart['text_label'] = gt30_by_brand_chart['Value (L)'].apply(lambda x: f'{x:.2f}L')
                     fig_gt30 = px.bar(
-                        gt30_by_brand, x='Brand', y='Value (L)',
+                        gt30_by_brand_chart, x='Brand', y='Value (L)',
                         title='Stock Value (> 30 Days) by Brand', text='text_label',
                         labels={'Value (L)': 'Value (in Lakhs)'}, color_discrete_sequence=['#d62728']
                     )
@@ -739,18 +704,42 @@ if data and file_timestamps:
                     st.plotly_chart(fig_gt30, use_container_width=True)
                 else:
                     st.info("No stock data available for > 30 Days.")
-
+            
+            with st.expander("View Brand Value by Age Data Tables"):
+                table_col1, table_col2 = st.columns(2)
+                with table_col1:
+                    st.write("**Stock Value < 30 Days**")
+                    if not lt30_by_brand.empty:
+                        lt30_display = lt30_by_brand.rename(columns={'<30 Days Value': 'Total Value'})
+                        lt30_display = lt30_display.sort_values('Total Value', ascending=False)
+                        st.dataframe(
+                            lt30_display.style.format({'Total Value': format_indian_currency}),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("No data available.")
+                with table_col2:
+                    st.write("**Stock Value > 30 Days**")
+                    if not gt30_by_brand.empty:
+                        gt30_display = gt30_by_brand.rename(columns={'>30 Days Value': 'Total Value'})
+                        gt30_display = gt30_display.sort_values('Total Value', ascending=False)
+                        st.dataframe(
+                            gt30_display.style.format({'Total Value': format_indian_currency}),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("No data available.")
+            
             st.header("Download Filtered Stock Data")
-            #st.dataframe(filtered_df)
             csv_aging_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Aging Data as CSV", data=csv_aging_data, file_name="stock_aging_data.csv", mime="text/csv")
-
 
     # =================================================================================
     # --- PAGE 5: Dispatch & Delivery ---
     # =================================================================================
     elif page == "🚚 Dispatch & Delivery":
-        # --- ADDITION: Display last refreshed date ---
         display_last_refreshed(['dbmaster', 'dd', 'depot_mapping'], file_timestamps)
         st.header("Billing and Logistics Performance")
         
@@ -763,6 +752,7 @@ if data and file_timestamps:
         else:
             from_date_dd, to_date_dd = None, None
             st.sidebar.info("Posting Date column not available for filtering.")
+        
         st.sidebar.divider()
         st.sidebar.subheader("Other Filters")
         if from_date_dd and to_date_dd:
@@ -770,20 +760,25 @@ if data and file_timestamps:
             date_filtered_df = dispatch_delivery_df[(dispatch_delivery_df['DocDate'] >= from_datetime_dd) & (dispatch_delivery_df['DocDate'] <= to_datetime_dd)]
         else:
             date_filtered_df = dispatch_delivery_df.copy()
+        
         unique_depots = sorted(date_filtered_df['WhsCode'].dropna().unique())
         depot_selection = st.sidebar.multiselect('Select Depot(s) to Analyze:', options=unique_depots, default=[])
         filtered_df = date_filtered_df[date_filtered_df['WhsCode'].isin(depot_selection)] if depot_selection else date_filtered_df.copy()
+        
         if filtered_df.empty:
             st.warning("No data available for the selected filters.")
         else:
             st.subheader("Billing Accuracy")
-            matched_count, mismatched_count = filtered_df[filtered_df['Billing Status'] == 'Matched'].shape[0], filtered_df[filtered_df['Billing Status'] == 'Mismatched'].shape[0]
+            matched_count = filtered_df[filtered_df['Billing Status'] == 'Matched'].shape[0]
+            mismatched_count = filtered_df[filtered_df['Billing Status'] == 'Mismatched'].shape[0]
             total_orders_kpi = matched_count + mismatched_count
+            
             if total_orders_kpi > 0:
                 matched_percentage = f"{(matched_count / total_orders_kpi) * 100:.1f}%"
                 mismatched_percentage = f"{(mismatched_count / total_orders_kpi) * 100:.1f}%"
             else:
                 matched_percentage, mismatched_percentage = "N/A", "N/A"
+            
             kpi1, kpi2 = st.columns(2)
             kpi1.metric("✅ Correctly Billed Orders", f"{matched_count:,}", delta=matched_percentage)
             kpi2.metric("❌ Cross Billed Orders", f"{mismatched_count:,}", delta=mismatched_percentage, delta_color="inverse")
@@ -800,8 +795,10 @@ if data and file_timestamps:
             filtered_df['Delivery Category'] = filtered_df['Delivery Days'].apply(categorize_days)
 
             st.subheader("Dispatch & Delivery Timelines")
-            dispatch_le3, dispatch_gt3 = filtered_df[filtered_df['Dispatch Days'] <= 3].shape[0], filtered_df[filtered_df['Dispatch Days'] > 3].shape[0]
-            delivery_le3, delivery_gt3 = filtered_df[filtered_df['Delivery Days'] <= 3].shape[0], filtered_df[filtered_df['Delivery Days'] > 3].shape[0]
+            dispatch_le3 = filtered_df[filtered_df['Dispatch Days'] <= 3].shape[0]
+            dispatch_gt3 = filtered_df[filtered_df['Dispatch Days'] > 3].shape[0]
+            delivery_le3 = filtered_df[filtered_df['Delivery Days'] <= 3].shape[0]
+            delivery_gt3 = filtered_df[filtered_df['Delivery Days'] > 3].shape[0]
 
             if total_orders_kpi > 0:
                 dispatch_le3_pct = f"{(dispatch_le3 / total_orders_kpi) * 100:.1f}%"
@@ -864,7 +861,6 @@ if data and file_timestamps:
                 st.info("No case quantity data available for the case-based performance matrix.")
 
             st.subheader("Download Detailed Logistics Data")
-            #st.dataframe(filtered_df)
             csv_log_data = convert_df_to_csv(filtered_df)
             st.download_button(label="Download Filtered Logistics Data as CSV", data=csv_log_data, file_name="dispatch_delivery_data.csv", mime="text/csv")
 
