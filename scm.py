@@ -266,7 +266,7 @@ def create_combo_chart(df, x_col, bar_col, line_col, bar_text, line_text, title)
 
     fig.update_xaxes(title_text=x_col)
     fig.update_yaxes(title_text="<b>Stock Value (in ₹ Lakhs)</b>", secondary_y=False)
-    fig.update_yaxes(title_text="<b>Qty in Cases</b>", tickformat=",")
+    fig.update_yaxes(title_text="<b>Qty in Cases</b>", tickformat=",", secondary_y=True)
 
     return fig
 
@@ -989,7 +989,7 @@ else:
                         st.subheader("Billing Details")
                         st.markdown(f"**Billed From (Depot):** {details.get('WhsCode', 'N/A')}")
                         st.markdown(f"**Final Depot to Bill:** {details.get('Final Depot to Bill', 'N/A')}")
-                        st.markdown(f"**Billing Status:** {details.get('Billing Status', 'N/A')}")
+                        #st.markdown(f"**Billing Status:** {details.get('Billing Status', 'N/A')}")
                         st.markdown(f"**Order Type:** {details.get('Order Type', 'N/A')}")
                     
                     with col3:
@@ -1010,4 +1010,5 @@ else:
 
     else:
         st.error("Failed to load data from the FTP server. The dashboard cannot be displayed.")
+
         st.warning("Please check the FTP connection details in your Streamlit secrets and ensure the server is accessible.")
