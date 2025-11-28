@@ -816,7 +816,7 @@ else:
         # =================================================================================
         # --- PAGE 5: Dispatch & Delivery ---
         # =================================================================================
-        elif page == "🚚 Dispatch & Delivery":
+        elif page == "🚚 Delivery Efficiency":
             display_last_refreshed(['dbmaster', 'dd', 'depot_mapping'], file_timestamps)
             st.header("Billing and Logistics Performance")
             
@@ -1012,3 +1012,4 @@ else:
         st.error("Failed to load data from the FTP server. The dashboard cannot be displayed.")
 
         st.warning("Please check the FTP connection details in your Streamlit secrets and ensure the server is accessible.")
+
