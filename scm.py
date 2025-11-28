@@ -379,7 +379,7 @@ else:
             if col in stock_aging_data.columns:
                 stock_aging_data[col].fillna("Unknown", inplace=True)
 
-        # --- Dispatch & Delivery Data ---
+        # --- Delivery Efficiency Data ---
         db_master_df = data['dbmaster'].copy()
         dd_df = data['dd'].copy()
         depot_mapping_df = data['depot_mapping'].copy()
@@ -398,7 +398,7 @@ else:
                 ).fillna(0)
             else:
                 dd_df[col] = 0
-                st.warning(f"Warning: '{col}' column not found in Dispatch & Delivery data. Metrics based on it will be zero.")
+                st.warning(f"Warning: '{col}' column not found in Delivery Efficiency data. Metrics based on it will be zero.")
 
         db_master_df = db_master_df.loc[:, ~db_master_df.columns.duplicated()]
         db_master_df = pd.merge(db_master_df, depot_mapping_df, left_on='U_Depot', right_on='Depot to Bill', how='left')
@@ -459,7 +459,7 @@ else:
 
         # Define pages available for each role
         if st.session_state['role'] == 'admin':
-            page_options = ["📦 Stock Analysis", "🚚 Open Purchase Orders", "🧾 GRN vs. AP Reconciliation", "📈 Stock Aging", "🚚 Dispatch & Delivery", "Invoice Tracking"]
+            page_options = ["📦 Stock Analysis", "🚚 Open Purchase Orders", "🧾 GRN vs. AP Reconciliation", "📈 Stock Aging", "🚚 Delivery Efficiency", "Invoice Tracking"]
         elif st.session_state['role'] == 'tracker':
             page_options = ["Invoice Tracking"]
         else:
@@ -814,7 +814,7 @@ else:
                 st.download_button(label="Download Aging Data as CSV", data=csv_aging_data, file_name="stock_aging_data.csv", mime="text/csv")
 
         # =================================================================================
-        # --- PAGE 5: Dispatch & Delivery ---
+        # --- PAGE 5: Delivery Efficiency ---
         # =================================================================================
         elif page == "🚚 Delivery Efficiency":
             display_last_refreshed(['dbmaster', 'dd', 'depot_mapping'], file_timestamps)
@@ -872,7 +872,7 @@ else:
                 kpi1.metric("✅ Correctly Billed Orders", f"{matched_count:,}", delta=matched_percentage)
                 kpi2.metric("❌ Cross Billed Orders", f"{mismatched_count:,}", delta=mismatched_percentage, delta_color="inverse")
 
-                st.subheader("Dispatch & Delivery Timelines")
+                st.subheader("Delivery Efficiency Timelines")
                 dispatch_le3 = filtered_df[filtered_df['Dispatch Days'] <= 3].shape[0]
                 dispatch_gt3 = filtered_df[filtered_df['Dispatch Days'] > 3].shape[0]
                 delivery_le3 = filtered_df[filtered_df['Delivery Days'] <= 3].shape[0]
@@ -1012,4 +1012,5 @@ else:
         st.error("Failed to load data from the FTP server. The dashboard cannot be displayed.")
 
         st.warning("Please check the FTP connection details in your Streamlit secrets and ensure the server is accessible.")
+
 
