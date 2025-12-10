@@ -519,7 +519,7 @@ else:
                         }).reset_index()
                         chart_data = chart_data.sort_values(by='Stock Value', ascending=False)
                         chart_data['value_label'] = (chart_data['Stock Value'] / 1_00_000).apply(lambda x: f'₹{x:.2f}L')
-                        chart_data['qty_label'] = chart_data['Qty in Cases']
+                        chart_data['qty_label'] = chart_data['Qty in Cases'].round(0).astype(int)
                         title_text = f"Stock Value and Quantity {view_selection}"
                         fig = create_combo_chart(
                             df=chart_data, x_col=group_by_col, bar_col='Stock Value',
@@ -1012,5 +1012,6 @@ else:
         st.error("Failed to load data from the FTP server. The dashboard cannot be displayed.")
 
         st.warning("Please check the FTP connection details in your Streamlit secrets and ensure the server is accessible.")
+
 
 
